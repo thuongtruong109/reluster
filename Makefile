@@ -1,4 +1,9 @@
+ifneq (,$(wildcard .env))
+include .env
+endif
+
 export REDIS_PASSWORD
+export GRAFANA_ADMIN_PASSWORD
 .PHONY: format validate commander commander-ha commander-clt ha ha-cli ha-ready ha-scan ha-master ha-slave ha-test-failover ha-test ha-bench ha-backup ha-health clt clt-cli clt-init clt-ready clt-monitor clt-scan clt-test clt-bench clt-rollback clt-scale clt-health clean ci
 
 HA_COMPOSE_FILE = docker-compose.ha.yml
@@ -6,9 +11,11 @@ CLT_COMPOSE_FILE = docker-compose.cluster.yml
 TOOL_COMPOSE_FILE = docker-compose.tool.yml
 
 CLT_BENCH_DIR=benchmark-results
-REDIS_PASSWORD=redispw
 CLT_BENCH_IMAGE=thuongtruong1009/reluster-bench:latest
 REDIS_NETWORK=redisnet
+
+COMMANDER_HA_HOSTS = master:redis-master:6379:0:$(REDIS_PASSWORD),slave1:slave_1:6379:0:$(REDIS_PASSWORD),slave2:slave_2:6379:0:$(REDIS_PASSWORD),slave3:slave_3:6379:0:$(REDIS_PASSWORD)
+COMMANDER_CLUSTER_HOSTS = node1:node-1:6379:0:$(REDIS_PASSWORD),node2:node-2:6379:0:$(REDIS_PASSWORD),node3:node-3:6379:0:$(REDIS_PASSWORD),node4:node-4:6379:0:$(REDIS_PASSWORD),node5:node-5:6379:0:$(REDIS_PASSWORD),node6:node-6:6379:0:$(REDIS_PASSWORD)
 
 LOG_DIR=monitor-logs
 
@@ -30,7 +37,7 @@ ha:
 	docker compose -f $(HA_COMPOSE_FILE) up -d --force-recreate
 
 ha-cli:
-	docker exec -it $$(docker ps -qf "name=master_1") redis-cli -p 6379 -a masterpass
+	docker exec -it -e REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-master redis-cli -p 6379
 
 ha-ready:
 	chmod +x scripts/ha.sh
@@ -44,7 +51,7 @@ ha-master:
 	docker exec -it sentinel_1 redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
 
 ha-slave:
-	docker exec -it slave_1 redis-cli -a masterpass info replication
+	docker exec -it -e REDISCLI_AUTH="$${REDIS_PASSWORD}" slave_1 redis-cli info replication
 
 ha-test-failover:
 	chmod +x tests/ha-failover.sh
@@ -57,7 +64,7 @@ ha-test:
 # current only support on CI
 ha-bench:
 	chmod +x tests/ha-bench.sh
-	MASTER_PASS="masterpass" bash tests/ha-bench.sh all
+	MASTER_PASS="$${REDIS_PASSWORD}" bash tests/ha-bench.sh all
 
 ha-backup:
 	chmod +x scripts/ha-backup.sh
@@ -135,19 +142,27 @@ ci:
 	act -W .github/workflows/ci.yml --rm --pull=false --secret DOCKER_USERNAME= --secret DOCKER_PASSWORD=
 
 commander:
-	@if [ -z "$$CONFIG_PATH" ]; then \
-		echo "❌ CONFIG_PATH is not set."; \
+	@if [ -z "$$REDIS_PASSWORD" ]; then \
+		echo "❌ REDIS_PASSWORD is not set."; \
+		exit 1; \
+	fi
+	@if [ -z "$$COMMANDER_REDIS_HOSTS" ]; then \
+		echo "❌ COMMANDER_REDIS_HOSTS is not set."; \
 		exit 1; \
 	fi
 	docker compose -f $(TOOL_COMPOSE_FILE) up -d --force-recreate commander
 
-commander-ha:
-	@$(MAKE) commander CONFIG_PATH=ha.json
+commander-ha: export COMMANDER_REDIS_HOSTS = $(COMMANDER_HA_HOSTS)
+commander-ha: commander
 
-commander-clt:
-	@$(MAKE) commander CONFIG_PATH=cluster.json
+commander-clt: export COMMANDER_REDIS_HOSTS = $(COMMANDER_CLUSTER_HOSTS)
+commander-clt: commander
 
 monitor:
+	@if [ -z "$$GRAFANA_ADMIN_PASSWORD" ]; then \
+		echo "❌ GRAFANA_ADMIN_PASSWORD is not set."; \
+		exit 1; \
+	fi
 	docker compose -f $(TOOL_COMPOSE_FILE) up -d --force-recreate exporter prometheus grafana
 
 monitor-health:

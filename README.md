@@ -107,6 +107,25 @@ flowchart LR
    M3["🟥 Master #3 (Slots 10923–16383)"] --> R3["🟦 Replica #3"]
 ```
 
+## 🔐 Environment configuration
+
+Reluster does not ship with runtime passwords. Create a local `.env` file before
+running any Redis, Sentinel, Commander, or monitoring target:
+
+```bash
+cp .env.example .env
+```
+
+Set `REDIS_PASSWORD` to a strong random value. Set `GRAFANA_ADMIN_PASSWORD` as
+well when using `make monitor`. For example, `openssl rand -hex 32` generates a
+value that is safe to place in the Redis configuration templates. The `.env`
+file is ignored by Git and loaded by both Docker Compose and the Makefile. Keep
+`REDIS_MASTER_HOST` aligned with the master's static address in the HA network;
+the provided value works with the default Compose subnet.
+
+CI uses the `REDIS_PASSWORD` repository secret when available and creates an
+isolated per-run fallback credential for untrusted pull requests.
+
 ## 🤝 Contributing
 
 We welcome you to contribute and help improve Reluster 💚

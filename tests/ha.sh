@@ -1,19 +1,37 @@
 #!/bin/sh
 set -e
 
+: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
+
+redis_cli() {
+  CONTAINER=$1
+  shift
+  docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$CONTAINER" redis-cli "$@"
+}
 
 wait_for_ready() {
   CONTAINER=$1
   PORT=$2
   log "⏳ Waiting for $CONTAINER to be ready on port $PORT..."
-  for i in $(seq 1 60); do
+  for _ in $(seq 1 60); do
     if docker ps --filter "name=$CONTAINER" --filter "status=running" --format '{{.Names}}' | grep -q "$CONTAINER"; then
-      PONG=$(docker exec "$CONTAINER" redis-cli -a masterpass -p "$PORT" ping 2>/dev/null || true)
+      case "$CONTAINER" in
+        sentinel_*) PONG=$(docker exec "$CONTAINER" redis-cli -p "$PORT" ping 2>/dev/null || true) ;;
+        *) PONG=$(redis_cli "$CONTAINER" -p "$PORT" ping 2>/dev/null || true) ;;
+      esac
       if [ "$PONG" = "PONG" ]; then
-        ROLE=$(docker exec "$CONTAINER" redis-cli -a masterpass -p "$PORT" info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
+        case "$CONTAINER" in
+          sentinel_*)
+            log "✅ $CONTAINER is ready"
+            return 0
+            ;;
+        esac
+
+        ROLE=$(redis_cli "$CONTAINER" -p "$PORT" info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
         if [ "$ROLE" = "slave" ]; then
-          MASTER_HOST=$(docker exec "$CONTAINER" redis-cli -a masterpass -p "$PORT" info replication | grep "^master_host:" | cut -d: -f2 | tr -d '[:space:]' || true)
+          MASTER_HOST=$(redis_cli "$CONTAINER" -p "$PORT" info replication | grep "^master_host:" | cut -d: -f2 | tr -d '[:space:]' || true)
           if [ -n "$MASTER_HOST" ] && [ "$MASTER_HOST" != "?" ]; then
             log "✅ $CONTAINER is ready (role=slave, master=$MASTER_HOST)"
             return 0
@@ -44,8 +62,8 @@ wait_for_ready sentinel_3 26379
 log "Testing master set/get..."
 success=0
 for host in redis-master slave_1 slave_2 slave_3; do
-  if docker exec "$host" redis-cli -a masterpass set testkey testvalue 2>&1 | grep -vq "READONLY"; then
-    VALUE=$(docker exec "$host" redis-cli -a masterpass get testkey)
+  if redis_cli "$host" set testkey testvalue 2>&1 | grep -vq "READONLY"; then
+    VALUE=$(redis_cli "$host" get testkey)
     if [ "$VALUE" = "testvalue" ]; then
       NEW_MASTER=$host
       success=1
@@ -63,8 +81,8 @@ log "✅ Detected current master: $NEW_MASTER"
 log "Testing replication to slaves..."
 for host in slave_1 slave_2 slave_3; do
   replicated=0
-  for i in $(seq 1 20); do
-    VALUE=$(docker exec "$host" redis-cli -a masterpass get testkey || true)
+  for _ in $(seq 1 20); do
+    VALUE=$(redis_cli "$host" get testkey || true)
     if [ "$VALUE" = "testvalue" ]; then
       replicated=1
       break
@@ -87,9 +105,9 @@ docker exec sentinel_1 redis-cli -p 26379 sentinel failover mymaster || true
 
 # --- Detect new master ---
 NEW_MASTER=""
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   for host in slave_1 slave_2 slave_3; do
-    ROLE=$(docker exec "$host" redis-cli -a masterpass info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
+    ROLE=$(redis_cli "$host" info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
     if [ "$ROLE" = "master" ]; then
       NEW_MASTER=$host
       break 2
@@ -111,9 +129,9 @@ log "✅ New master is $NEW_MASTER"
 for host in slave_1 slave_2 slave_3; do
   if [ "$host" != "$NEW_MASTER" ]; then
     linked=0
-    for i in $(seq 1 60); do
-      ROLE=$(docker exec "$host" redis-cli -a masterpass info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
-      LINK_STATUS=$(docker exec "$host" redis-cli -a masterpass info replication | grep "^master_link_status:" | cut -d: -f2 | tr -d '[:space:]' || true)
+    for _ in $(seq 1 60); do
+      ROLE=$(redis_cli "$host" info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
+      LINK_STATUS=$(redis_cli "$host" info replication | grep "^master_link_status:" | cut -d: -f2 | tr -d '[:space:]' || true)
       if [ "$ROLE" = "slave" ] && [ "$LINK_STATUS" = "up" ]; then
         log "✅ $host is following $NEW_MASTER with replication up"
         linked=1
@@ -124,7 +142,7 @@ for host in slave_1 slave_2 slave_3; do
     done
     if [ $linked -ne 1 ]; then
       log "❌ $host did not attach to $NEW_MASTER properly"
-      docker exec "$host" redis-cli -a masterpass info replication || true
+      redis_cli "$host" info replication || true
       exit 1
     fi
   fi
@@ -132,8 +150,8 @@ done
 
 # --- Test write on new master ---
 log "Testing set/get on new master..."
-docker exec "$NEW_MASTER" redis-cli -a masterpass set failoverkey failovervalue
-VALUE=$(docker exec "$NEW_MASTER" redis-cli -a masterpass get failoverkey)
+redis_cli "$NEW_MASTER" set failoverkey failovervalue
+VALUE=$(redis_cli "$NEW_MASTER" get failoverkey)
 if [ "$VALUE" != "failovervalue" ]; then
   log "❌ New master set/get failed"
   exit 1
@@ -143,8 +161,8 @@ fi
 for host in slave_1 slave_2 slave_3; do
   if [ "$host" != "$NEW_MASTER" ]; then
     replicated=0
-    for i in $(seq 1 60); do
-      VALUE=$(docker exec "$host" redis-cli -a masterpass get failoverkey || true)
+    for _ in $(seq 1 60); do
+      VALUE=$(redis_cli "$host" get failoverkey || true)
       if [ "$VALUE" = "failovervalue" ]; then
         log "✅ $host successfully replicated failoverkey from $NEW_MASTER"
         replicated=1
@@ -155,7 +173,7 @@ for host in slave_1 slave_2 slave_3; do
     done
     if [ $replicated -ne 1 ]; then
       log "❌ Replication to $host after failover failed"
-      docker exec "$host" redis-cli -a masterpass info replication || true
+      redis_cli "$host" info replication || true
       exit 1
     fi
   fi
@@ -167,8 +185,8 @@ docker start redis-master
 
 # --- Ensure old master rejoins as slave ---
 joined=0
-for i in $(seq 1 60); do
-  ROLE=$(docker exec redis-master redis-cli -a masterpass info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
+for _ in $(seq 1 60); do
+  ROLE=$(redis_cli redis-master info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
   if [ "$ROLE" = "slave" ]; then
     log "✅ Old master rejoined as slave"
     joined=1
@@ -180,7 +198,7 @@ done
 
 if [ $joined -ne 1 ]; then
   log "❌ Old master did not rejoin as slave"
-  docker exec redis-master redis-cli -a masterpass info replication || true
+  redis_cli redis-master info replication || true
   exit 1
 fi
 

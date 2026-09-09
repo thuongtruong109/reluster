@@ -10,6 +10,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: reluster
+  REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD || format('reluster-build-{0}-{1}', github.run_id, github.run_attempt) }}
 
 jobs:
   build-and-push:

@@ -105,3 +105,134 @@
   - Issue templates & contributing guidelines (highlight what already exists).
 - [ ] 📚 Automatically generate architecture, config, and API documentation from source code and config files (Documize, MkDocs, Swagger).
 - [ ] 🗺️ Integrate tools to automatically visualize dependencies between services, scripts, and workflows in the repo (Graphviz, Mermaid, GitHub Dependency Graph).
+
+---
+
+### 2.2 Cấu hình & Bảo mật
+
+**Vấn đề nghiêm trọng:**
+
+```bash
+# configs/ha/sentinel/sentinel.conf - PASSWORD HARDCODED
+sentinel auth-pass mymaster masterpass
+
+# configs/ha/replica/slave.conf - IP HARDCODED
+replicaof 172.28.0.10 6379
+```
+
+```bash
+# docker-compose.tool.yml - GRAFANA DEFAULT PASSWORD
+GF_SECURITY_ADMIN_PASSWORD: admin
+```
+
+**Thiếu:**
+
+- Không có TLS/SSL configuration
+- Không có ACL (Access Control List) cho Redis
+- Không có bind address consistency (master.conf vs slave.conf)
+- Không có maxmemory eviction policy
+
+### 2.3 Scripts & Automation
+
+| Script                    | Vấn đề                                           |
+| ------------------------- | ------------------------------------------------ |
+| `scripts/ha-backup.sh`    | Không verify restore, duplicate `ls -lh`         |
+| `scripts/clt-rollback.sh` | Dùng python3 không cần thiết, harder to maintain |
+| `scripts/monitor.sh`      | Dùng `docker exec -it` sẽ fail trong CI          |
+| `scripts/ha-health.sh`    | Hardcoded IPs, không detect dynamic              |
+
+### 2.4 Testing
+
+**Thiếu:**
+
+- Negative testing (invalid commands, wrong passwords)
+- Network partition simulation
+- Data consistency verification sau failover
+- Performance regression tests
+- Load testing với realistic workloads
+- Unit tests cho scripts
+
+### 2.5 CI/CD
+
+**Vấn đề:**
+
+```yaml
+# ci.yml - Password hardcode trong health check script
+MASTER_PASS="masterpass" bash tests/ha-bench.sh all
+```
+
+- Retry state (`.retry_count`) có thể bị commit vào git
+- Không có proper cleanup giữa test runs
+- Không có parallel test execution
+- Notification chỉ echo, không gửi Slack/Email
+
+### 2.6 Monitoring
+
+**Hiện tại:** Basic Prometheus + Grafana nhưng:
+
+- Không có pre-built Grafana dashboards
+- Không có alerting rules
+- Không có centralized logging (ELK/Loki)
+- Không có SLA metrics
+
+---
+
+## 3. TÍNH NĂNG CẦN THÊM
+
+### Ưu tiên cao:
+
+| Tính năng                     | Mô tả                                  |
+| ----------------------------- | -------------------------------------- |
+| **TLS/SSL**                   | Encode data in-transit giữa nodes      |
+| **ACL System**                | User/role-based access control         |
+| **Network Partition Testing** | Simulate split-brain scenarios         |
+| **Chaos Engineering**         | LitmusChaos hoặc script tự kill nodes  |
+| **Alert System**              | Slack/Email/Telegram notifications     |
+| **PITR Backup**               | Point-in-time recovery với AOF streams |
+
+### Ưu tiên trung bình:
+
+| Tính năng             | Mô tả                             |
+| --------------------- | --------------------------------- |
+| **K8s Deployment**    | Helm chart, StatefulSet, Operator |
+| **Blue/Green Deploy** | Zero-downtime với HAProxy         |
+| **Cloud Backup**      | Auto backup lên S3/GCS            |
+| **ACL Rotation**      | Vault integration                 |
+| **Chaos Mesh**        | Network latency, packet loss      |
+
+### Ưu tiên thấp:
+
+| Tính năng             | Mô tả                      |
+| --------------------- | -------------------------- |
+| **Multi-region**      | Geo-replication simulation |
+| **Cost Optimization** | Spot instances test        |
+| **Service Mesh**      | Istio/Linkerd integration  |
+
+---
+
+## 4. VẤN ĐỀ CỤ THỂ CẦN SỬA
+
+### 4.1 Bảo mật (Critical)
+
+```bash
+# Cần thay thế hardcoded passwords bằng environment variables
+# Sentinel config cần dùng envsubst giống cluster
+```
+
+### 4.2 Consistency
+
+```bash
+# master.conf thiếu bind
+bind 0.0.0.0  # Cần thêm
+
+# slave.conf có protected-mode no - nguy hiểm
+protected-mode yes  # Nên dùng
+```
+
+### 4.3 CI/CD
+
+```yaml
+# Cần thêm vào ci.yml:
+- name: Cleanup retry state
+  run: rm -f .retry_count .rollback-state.json
+```

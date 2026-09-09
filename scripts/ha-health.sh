@@ -8,13 +8,14 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-MASTER_HOST="172.28.0.10"
+MASTER_HOST="${REDIS_MASTER_HOST:-172.28.0.10}"
 MASTER_PORT="6379"
-MASTER_PASS="masterpass"
+: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+MASTER_PASS="$REDIS_PASSWORD"
 
 SLAVE_HOSTS=("172.28.0.11" "172.28.0.12" "172.28.0.13")
 SLAVE_PORTS=("6379" "6379" "6379")
-SLAVE_PASS="masterpass"
+SLAVE_PASS="$REDIS_PASSWORD"
 
 SENTINEL_HOSTS=("172.28.0.20" "172.28.0.21" "172.28.0.22")
 SENTINEL_PORTS=("26379" "26379" "26379")
@@ -48,7 +49,9 @@ check_redis_connection() {
     local password="$3"
     local name="$4"
 
-    if docker exec redis-master redis-cli -h "$host" -p "$port" -a "$password" ping &>/dev/null; then
+    local reply
+    reply=$(docker exec -e REDISCLI_AUTH="$password" redis-master redis-cli -h "$host" -p "$port" ping 2>/dev/null || true)
+    if [ "$reply" = "PONG" ]; then
         print_status "OK" "$name connection successful"
         return 0
     else
@@ -63,7 +66,9 @@ get_current_master() {
         local sentinel_port="${SENTINEL_PORTS[$i]}"
         local sentinel_num=$((i + 1))
 
-        if docker exec "sentinel_$sentinel_num" redis-cli -h "$sentinel_host" -p "$sentinel_port" ping &>/dev/null; then
+        local sentinel_reply
+        sentinel_reply=$(docker exec "sentinel_$sentinel_num" redis-cli -h "$sentinel_host" -p "$sentinel_port" ping 2>/dev/null || true)
+        if [ "$sentinel_reply" = "PONG" ]; then
             local master_addr
             master_addr=$(docker exec "sentinel_$sentinel_num" redis-cli -p "$sentinel_port" sentinel get-master-addr-by-name "$MASTER_NAME" 2>/dev/null)
             if [ -n "$master_addr" ]; then
@@ -97,7 +102,9 @@ check_replication() {
     local test_key="health_check_$(date +%s)"
     local test_value="health_check_value_$(date +%s)"
 
-    if ! docker exec redis-master redis-cli -h "$current_master_host" -p "$current_master_port" -a "$MASTER_PASS" set "$test_key" "$test_value" &>/dev/null; then
+    local write_reply
+    write_reply=$(docker exec -e REDISCLI_AUTH="$MASTER_PASS" redis-master redis-cli -h "$current_master_host" -p "$current_master_port" set "$test_key" "$test_value" 2>/dev/null || true)
+    if [ "$write_reply" != "OK" ]; then
         print_status "ERROR" "Failed to write test key to current master"
         return 1
     fi
@@ -106,8 +113,6 @@ check_replication() {
 
     local failed_slaves=0
     for i in "${!SLAVE_HOSTS[@]}"; do
-        local slave_host="${SLAVE_HOSTS[$i]}"
-        local slave_port="${SLAVE_PORTS[$i]}"
         local slave_num=$((i + 1))
 
         local replicated_value
@@ -141,7 +146,9 @@ check_sentinel_status() {
         local sentinel_port="${SENTINEL_PORTS[$i]}"
         local sentinel_num=$((i + 1))
 
-        if docker exec "sentinel_$sentinel_num" redis-cli -h "$sentinel_host" -p "$sentinel_port" ping &>/dev/null; then
+        local sentinel_reply
+        sentinel_reply=$(docker exec "sentinel_$sentinel_num" redis-cli -h "$sentinel_host" -p "$sentinel_port" ping 2>/dev/null || true)
+        if [ "$sentinel_reply" = "PONG" ]; then
             print_status "OK" "Sentinel_$sentinel_num is responding"
 
             local master_info
@@ -202,15 +209,19 @@ check_replication_lag() {
 check_container_health() {
     log "Checking container health..."
 
-    local containers=("redis-master" "slave_1" "slave_2" "slave_3" "sentinel_1" "sentinel_2" "sentinel_3" "commander")
+    local containers=("redis-master" "slave_1" "slave_2" "slave_3" "sentinel_1" "sentinel_2" "sentinel_3")
+    local overall_status=0
 
     for container in "${containers[@]}"; do
         if docker ps --filter "name=$container" --filter "status=running" | grep -q "$container"; then
             print_status "OK" "Container $container is running"
         else
             print_status "ERROR" "Container $container is not running"
+            overall_status=1
         fi
     done
+
+    return "$overall_status"
 }
 
 collect_metrics() {

@@ -9,7 +9,8 @@ NC='\033[0m' # No Color
 
 NODES=("node-1" "node-2" "node-3" "node-4" "node-5" "node-6")
 REDIS_PORT=6379
-CLUSTER_PASS="redispw"
+: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+CLUSTER_PASS="${CLUSTER_PASS:-$REDIS_PASSWORD}"
 
 LOG_FILE="/tmp/redis_cluster_health.log"
 METRICS_FILE="/tmp/redis_cluster_metrics.json"
@@ -51,7 +52,9 @@ check_redis_connection() {
     log "Checking Redis connections..."
     local overall_status=0
     for node in "${NODES[@]}"; do
-        if docker exec "$node" redis-cli -a "$CLUSTER_PASS" -p $REDIS_PORT PING &>/dev/null; then
+        local reply
+        reply=$(docker exec -e REDISCLI_AUTH="$CLUSTER_PASS" "$node" redis-cli -p "$REDIS_PORT" PING 2>/dev/null || true)
+        if [ "$reply" = "PONG" ]; then
             print_status "OK" "Redis node $node responds"
         else
             print_status "ERROR" "Redis node $node not responding"

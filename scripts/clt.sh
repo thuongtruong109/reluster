@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+: "${CLUSTER_PASS:=${REDIS_PASSWORD:?REDIS_PASSWORD must be set}}"
+
 CLUSTER_PORT=6379
 TOTAL_MASTERS=3
 TOTAL_REPLICAS=3
@@ -17,10 +19,22 @@ function wait_for_cluster() {
 
   for node in "${CLUSTER_NODES[@]}"; do
     echo "- Checking $node..."
-    timeout 60 bash -c "until docker exec $node redis-cli -a $CLUSTER_PASS -p $CLUSTER_PORT ping >/dev/null 2>&1; do sleep 2; done"
+    local deadline=$((SECONDS + 60))
+    local reply
+    while true; do
+      reply=$(docker exec -e REDISCLI_AUTH="$CLUSTER_PASS" "$node" redis-cli -p "$CLUSTER_PORT" ping 2>/dev/null || true)
+      if [[ "$reply" == "PONG" ]]; then
+        break
+      fi
+      if (( SECONDS >= deadline )); then
+        echo "❌ Timed out waiting for $node"
+        exit 1
+      fi
+      sleep 2
+    done
   done
 
-  if docker exec node-1 redis-cli -a $CLUSTER_PASS cluster info | grep -q "cluster_state:ok"; then
+  if docker exec -e REDISCLI_AUTH="$CLUSTER_PASS" node-1 redis-cli cluster info | grep -q "cluster_state:ok"; then
     echo "✅ Cluster state OK"
   else
     echo "❌ Cluster not healthy"
@@ -29,12 +43,11 @@ function wait_for_cluster() {
 }
 
 function validate_config() {
-  for config in configs/cluster/node.conf; do
-    if [ ! -f "$config" ]; then
-      echo "❌ Missing configuration file: $config"
-      exit 1
-    fi
-  done
+  local config="configs/cluster/node.conf"
+  if [ ! -f "$config" ]; then
+    echo "❌ Missing configuration file: $config"
+    exit 1
+  fi
   echo "✅ All configuration files present"
 }
 
@@ -56,12 +69,22 @@ function cluster_security_scan() {
   done
 
   echo "🔑 Checking password requirement..."
-  if docker exec node-1 redis-cli -a "$CLUSTER_PASS" ping >/dev/null 2>&1; then
-    echo "✅ Cluster requires password"
-  else
+  local unauthenticated_reply
+  local authenticated_reply
+  unauthenticated_reply=$(docker exec node-1 redis-cli ping 2>/dev/null || true)
+  authenticated_reply=$(docker exec -e REDISCLI_AUTH="$CLUSTER_PASS" node-1 redis-cli ping 2>/dev/null || true)
+
+  if [[ "$unauthenticated_reply" != NOAUTH* ]]; then
     echo "❌ Cluster allows unauthenticated access!"
     exit 1
   fi
+
+  if [[ "$authenticated_reply" != "PONG" ]]; then
+    echo "❌ Cluster rejected the configured REDIS_PASSWORD"
+    exit 1
+  fi
+
+  echo "✅ Cluster rejects unauthenticated access"
 
   echo "✅ Security scan passed"
 }

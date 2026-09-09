@@ -1,4 +1,11 @@
+import "dotenv/config";
 import Redis from "ioredis";
+
+const password = process.env.REDIS_PASSWORD;
+
+if (!password) {
+  throw new Error("REDIS_PASSWORD must be set");
+}
 
 const nodes = [
   { host: "127.0.0.1", port: 6379 },
@@ -8,7 +15,7 @@ const nodes = [
 
 async function main() {
   for (const node of nodes) {
-    const client = new Redis(node.port, node.host, { password: "redispw" });
+    const client = new Redis(node.port, node.host, { password });
     try {
       console.log(`🔌 Connecting to ${node.host}:${node.port}`);
       const pong = await client.ping();

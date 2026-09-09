@@ -44,8 +44,10 @@ EOF
 
 wait_node_ready() {
   local node=$1
-  for i in {1..10}; do
-    if docker exec "$node" redis-cli -a "$CLUSTER_PASS" ping >/dev/null 2>&1; then
+  for _ in {1..10}; do
+    local reply
+    reply=$(docker exec -e REDISCLI_AUTH="$CLUSTER_PASS" "$node" redis-cli ping 2>/dev/null || true)
+    if [[ "$reply" == "PONG" ]]; then
       return 0
     fi
     sleep 2

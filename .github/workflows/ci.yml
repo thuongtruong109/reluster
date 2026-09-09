@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
+env:
+  REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD || format('reluster-ci-{0}-{1}', github.run_id, github.run_attempt) }}
+
 jobs:
   lint-and-validate:
     runs-on: ubuntu-latest
@@ -47,9 +50,9 @@ jobs:
         id: check_trivy
         run: |
           if [ -f "${{ github.workspace }}/trivy-results.sarif" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload Trivy scan results
@@ -122,8 +125,6 @@ jobs:
     permissions:
       security-events: write
     needs: [lint-and-validate]
-    env:
-      REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -152,9 +153,9 @@ jobs:
         id: check_trivy_cluster
         run: |
           if [ -f "${{ github.workspace }}/trivy-cluster-results.sarif" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload Cluster Trivy scan results
@@ -165,11 +166,12 @@ jobs:
 
   cluster-health-check:
     runs-on: ubuntu-latest
-    env:
-      REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Cleanup retry state
+        run: rm -f .retry_count .rollback-state.json
 
       - name: Init retry count
         run: |
@@ -191,7 +193,7 @@ jobs:
           set +e
           make clt-health
           STATUS=$?
-          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
           set -e
 
       - name: Reset Retry Count on Success
@@ -240,8 +242,6 @@ jobs:
   cluster-integration-tests:
     runs-on: ubuntu-latest
     needs: [lint-and-validate]
-    env:
-      REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -273,8 +273,6 @@ jobs:
   cluster-performance-tests:
     runs-on: ubuntu-latest
     needs: [cluster-integration-tests]
-    env:
-      REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -326,8 +324,6 @@ jobs:
   monitor-health:
     runs-on: ubuntu-latest
     # if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    env:
-      REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

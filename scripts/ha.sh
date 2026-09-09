@@ -1,25 +1,62 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HA_COMPOSE_FILE="docker-compose.ha.yml"
 HA_MASTER_NAME="redis-master"
-HA_SENTINEL_NAME="sentinel_1"
-HA_PASSWORD="masterpass"
 CONTAINERS=(redis-master slave_1 slave_2 slave_3 sentinel_1 sentinel_2 sentinel_3)
 REDIS_PORTS=(6379 6380 26379)
+
+: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+
+function wait_for_redis() {
+  local container="$1"
+  local deadline=$((SECONDS + 60))
+  local reply
+
+  while true; do
+    reply=$(docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$container" redis-cli ping 2>/dev/null || true)
+    if [[ "$reply" == "PONG" ]]; then
+      return 0
+    fi
+
+    if (( SECONDS >= deadline )); then
+      echo "❌ Timed out waiting for $container"
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+function wait_for_sentinel() {
+  local container="$1"
+  local deadline=$((SECONDS + 60))
+  local reply
+
+  while true; do
+    reply=$(docker exec "$container" redis-cli -p 26379 ping 2>/dev/null || true)
+    if [[ "$reply" == "PONG" ]]; then
+      return 0
+    fi
+
+    if (( SECONDS >= deadline )); then
+      echo "❌ Timed out waiting for $container"
+      return 1
+    fi
+    sleep 2
+  done
+}
 
 function wait_for_replication() {
   echo "⏳ Waiting for Redis Replication to be ready..."
   sleep 20
 
-  timeout 60 bash -c "until docker exec $HA_MASTER_NAME redis-cli -a $HA_PASSWORD ping; do sleep 2; done"
+  wait_for_redis "$HA_MASTER_NAME"
 
   for i in 1 2 3; do
-    timeout 60 bash -c "until docker exec slave_$i redis-cli -a $HA_PASSWORD ping; do sleep 2; done"
+    wait_for_redis "slave_$i"
   done
 
   for i in 1 2 3; do
-    timeout 60 bash -c "until docker exec sentinel_$i redis-cli -p 26379 ping; do sleep 2; done"
+    wait_for_sentinel "sentinel_$i"
   done
 
   echo "✅ Replication is ready"
@@ -56,12 +93,22 @@ function replication_security_scan() {
   done
 
   echo "🔑 Checking password requirement on $HA_MASTER_NAME..."
-  if docker exec "$HA_MASTER_NAME" redis-cli -a "$HA_PASSWORD" ping >/dev/null 2>&1; then
-    echo "✅ Redis master requires password"
-  else
+  local unauthenticated_reply
+  local authenticated_reply
+  unauthenticated_reply=$(docker exec "$HA_MASTER_NAME" redis-cli ping 2>/dev/null || true)
+  authenticated_reply=$(docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$HA_MASTER_NAME" redis-cli ping 2>/dev/null || true)
+
+  if [[ "$unauthenticated_reply" != NOAUTH* ]]; then
     echo "❌ Redis master allows unauthenticated access!"
     exit 1
   fi
+
+  if [[ "$authenticated_reply" != "PONG" ]]; then
+    echo "❌ Redis master rejected the configured REDIS_PASSWORD"
+    exit 1
+  fi
+
+  echo "✅ Redis master rejects unauthenticated access"
 
   echo "✅ Security scan passed"
 }

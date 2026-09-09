@@ -12,5 +12,6 @@ dist/
 *.txt
 
 playground
+.retry_count
 .rollback-state.json
 tools/grafana/data

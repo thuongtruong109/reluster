@@ -2,19 +2,21 @@ x-redis-common: &redis-common
   build:
     context: .
     dockerfile: ./configs/ha/replica/Dockerfile
+  image: thuongtruong1009/reluster-replica
   restart: always
-  networks:
-    redisnet:
-      ipv4_address: 0.0.0.0
+  environment:
+    REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    REDIS_MASTER_HOST: ${REDIS_MASTER_HOST:-172.28.0.10}
 
 x-sentinel-common: &sentinel-common
   build:
     context: .
     dockerfile: ./configs/ha/sentinel/Dockerfile
+  image: thuongtruong1009/reluster-sentinel
   restart: always
-  networks:
-    redisnet:
-      ipv4_address: 0.0.0.0
+  environment:
+    REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    REDIS_MASTER_HOST: ${REDIS_MASTER_HOST:-172.28.0.10}
   depends_on:
     - redis-master
 
@@ -22,25 +24,24 @@ services:
   redis-master:
     <<: *redis-common
     container_name: redis-master
-    image: thuongtruong1009/reluster-replica
     volumes:
-      - ./configs/ha/replica/master.conf:/etc/redis/redis.conf
+      - ./configs/ha/replica/master.conf:/etc/redis/redis.conf.template:ro
     ports:
       - "6379:6379"
     networks:
       redisnet:
-        ipv4_address: 172.28.0.10
+        ipv4_address: ${REDIS_MASTER_HOST:-172.28.0.10}
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "masterpass", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping"]
       interval: 5s
       timeout: 3s
       retries: 5
 
   slave_1:
-    image: thuongtruong1009/reluster-replica
+    <<: *redis-common
     container_name: slave_1
     volumes:
-      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf
+      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf.template:ro
     ports:
       - "6380:6379"
     networks:
@@ -50,10 +51,10 @@ services:
       - redis-master
 
   slave_2:
-    image: thuongtruong1009/reluster-replica
+    <<: *redis-common
     container_name: slave_2
     volumes:
-      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf
+      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf.template:ro
     ports:
       - "6381:6379"
     networks:
@@ -63,10 +64,10 @@ services:
       - redis-master
 
   slave_3:
-    image: thuongtruong1009/reluster-replica
+    <<: *redis-common
     container_name: slave_3
     volumes:
-      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf
+      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf.template:ro
     ports:
       - "6382:6379"
     networks:
@@ -78,7 +79,6 @@ services:
   sentinel_1:
     <<: *sentinel-common
     container_name: sentinel_1
-    image: thuongtruong1009/reluster-sentinel
     ports:
       - "26379:26379"
     networks:
@@ -88,7 +88,6 @@ services:
   sentinel_2:
     <<: *sentinel-common
     container_name: sentinel_2
-    image: thuongtruong1009/reluster-sentinel
     ports:
       - "26380:26379"
     networks:
@@ -98,7 +97,6 @@ services:
   sentinel_3:
     <<: *sentinel-common
     container_name: sentinel_3
-    image: thuongtruong1009/reluster-sentinel
     ports:
       - "26381:26379"
     networks:

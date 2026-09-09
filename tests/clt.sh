@@ -1,45 +1,75 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REDIS_CLI="docker exec node-1 redis-cli -a redispw -c"
+: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+
+function redis_cli() {
+  local container="$1"
+  shift
+  docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$container" redis-cli "$@"
+}
+
+function read_from_replica() {
+  local container="$1"
+  local key="$2"
+  printf 'READONLY\nGET %s\n' "$key" \
+    | docker exec -i -e REDISCLI_AUTH="$REDIS_PASSWORD" "$container" redis-cli --raw \
+    | tail -n 1
+}
+
 echo "🚀 Redis Cluster Test Suite"
 
 echo -e "\n[TEST 1] Cluster health check"
-$REDIS_CLI cluster info | grep cluster_state
+redis_cli node-1 -c cluster info | grep cluster_state
 
 echo -e "\n[TEST 2] Key distribution"
-$REDIS_CLI set foo bar
-val=$($REDIS_CLI get foo)
+redis_cli node-1 -c set foo bar
+val=$(redis_cli node-1 -c get foo)
 echo "foo=$val"
 
 echo -e "\n[TEST 3] Insert multiple keys"
 for i in $(seq 1 10); do
-  $REDIS_CLI set key$i val$i >/dev/null
+  redis_cli node-1 -c set "key$i" "val$i" >/dev/null
 done
-slot=$($REDIS_CLI cluster keyslot key5)
+slot=$(redis_cli node-1 -c cluster keyslot key5)
 echo "key5 in slot $slot"
-$REDIS_CLI cluster getkeysinslot $slot 10
+redis_cli node-1 -c cluster getkeysinslot "$slot" 10
 
 echo -e "\n[TEST 4] Replica sync"
-docker exec node-1 redis-cli -a redispw -c set sync-test 123
-replica_val=$(docker exec node-4 redis-cli -a redispw get sync-test)
-echo "Replica node-4 value: $replica_val"
+redis_cli node-1 -c set sync-test 123
+replica_node=""
+for _ in $(seq 1 10); do
+  for candidate in node-4 node-5 node-6; do
+    replica_val=$(read_from_replica "$candidate" sync-test 2>/dev/null || true)
+    if [ "$replica_val" = "123" ]; then
+      replica_node="$candidate"
+      break 2
+    fi
+  done
+  sleep 1
+done
+
+if [ -z "$replica_node" ]; then
+  echo "Replica sync failed: no replica returned the expected value" >&2
+  exit 1
+fi
+echo "Replica $replica_node value: 123"
 
 echo -e "\n[TEST 5] Failover (stop node-1)"
 docker stop node-1
 sleep 8
-docker exec node-2 redis-cli -a redispw cluster nodes | grep master
+redis_cli node-2 cluster nodes | grep master
 docker start node-1
 sleep 5
 
 echo -e "\n[TEST 6] Rejoin node-1"
-docker exec node-1 redis-cli -a redispw cluster info | grep cluster_state
+redis_cli node-1 cluster info | grep cluster_state
 
 echo -e "\n[TEST 7] Persistence after restart"
-docker exec node-2 redis-cli -a redispw -c set persist-key hello
+redis_cli node-2 -c set persist-key hello
 docker restart node-2
 sleep 5
-val=$(docker exec node-2 redis-cli -a redispw -c get persist-key)
+val=$(redis_cli node-2 -c get persist-key)
 echo "persist-key=$val"
 
 echo -e "\n✅ All tests completed!"

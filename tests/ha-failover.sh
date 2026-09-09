@@ -6,7 +6,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-PASSWORD="masterpass"
+: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
 SENTINEL=sentinel_1
 REPLICA=slave_1
 MASTER=redis-master
@@ -43,7 +43,7 @@ info "\n=== Step 3: Show new master after failover ==="
 docker_exec $SENTINEL redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster || error "Failed to get new master!"
 
 info "\n=== Step 4: Check role of replica ==="
-docker_exec $REPLICA redis-cli -a $PASSWORD INFO replication | grep role || error "Failed to get replica role!"
+docker_exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$REPLICA" redis-cli INFO replication | grep role || error "Failed to get replica role!"
 
 info "\n=== Step 5: Restart old master ==="
 docker start $MASTER || error "Failed to start master!"
@@ -51,6 +51,6 @@ sleep 5
 
 info "\n=== Step 6: Check cluster again ==="
 docker_exec $SENTINEL redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster || error "Failed to get master!"
-docker_exec $MASTER redis-cli -a $PASSWORD INFO replication | grep role || error "Failed to get master role!"
+docker_exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$MASTER" redis-cli INFO replication | grep role || error "Failed to get master role!"
 
 success "\n=== DONE: Sentinel failover test completed! ===\n"
