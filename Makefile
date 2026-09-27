@@ -4,7 +4,7 @@ endif
 
 export REDIS_PASSWORD
 export GRAFANA_ADMIN_PASSWORD
-.PHONY: format validate commander commander-ha commander-clt ha ha-cli ha-ready ha-scan ha-master ha-slave ha-test-failover ha-test ha-bench ha-backup ha-health clt clt-cli clt-init clt-ready clt-monitor clt-scan clt-test clt-bench clt-rollback clt-scale clt-health clean ci
+.PHONY: format validate console console-logs commander commander-ha commander-clt ha ha-cli ha-ready ha-scan ha-master ha-slave ha-test-failover ha-test ha-bench ha-backup ha-health clt clt-cli clt-init clt-ready clt-monitor clt-scan clt-test clt-bench clt-rollback clt-scale clt-health clean ci
 
 HA_COMPOSE_FILE = docker-compose.ha.yml
 CLT_COMPOSE_FILE = docker-compose.cluster.yml
@@ -168,6 +168,17 @@ monitor:
 monitor-health:
 	chmod +x scripts/monitor.sh
 	LOG_DIR=$(LOG_DIR) bash ./scripts/monitor.sh
+
+console:
+	@if [ -z "$$REDIS_PASSWORD" ]; then \
+		echo "❌ REDIS_PASSWORD is not set."; \
+		exit 1; \
+	fi
+	docker compose -f $(TOOL_COMPOSE_FILE) up -d --build --force-recreate console
+	@echo "Reluster Console: http://localhost:$${CONSOLE_PORT:-8080}"
+
+console-logs:
+	docker compose -f $(TOOL_COMPOSE_FILE) logs -f console
 
 demo-ping:
 # 	docker compose -f docker-compose.cluster.dev.yml up -d --build --force-recreate node-1 node-2 node-3 node-4 node-5 node-6

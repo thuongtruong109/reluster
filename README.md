@@ -36,6 +36,32 @@ This project provides a **hands-on Redis lab** that covers both **Sentinel** and
 - ✔ Failover Testing – Simulate node failures and observe automatic recovery
 - ✔ Scaling – Add/remove nodes and reshard data with minimal downtime
 - ✔ Monitoring Stack - Redis-Commander, Redis-Exporter, Prometheus, Grafana for real-time insights
+- ✔ Reluster Console - Unified Cluster/Sentinel topology, metrics, safe demo data management, and controlled failover
+
+## 🖥️ Reluster Console
+
+Reluster Console provides one local dashboard for both Redis modes. It shows
+node roles, slot coverage, Sentinel quorum, the active master, memory, clients,
+throughput, and a safe `demo:*` key explorer. Redis credentials remain in the
+backend and the web UI is bound to localhost by default.
+
+Start Redis first, then the Console:
+
+```bash
+# Cluster mode
+make clt
+make clt-init
+make console
+
+# Or Sentinel mode
+make ha
+make console
+```
+
+Open <http://localhost:8080>. Key writes are limited to `demo:*`. Sentinel
+failover is disabled by default; set `CONSOLE_FAILOVER_ENABLED=true` in `.env`
+when you intentionally want to run that demo. See [the Console guide](apps/console/README.md)
+for configuration and development details.
 
 <!-- - ✔ Security – Basic auth, TLS setup examples -->
 <!-- - ✔ Multi-Platform – Works on Linux, macOS, Windows (WSL2/Docker Desktop) -->

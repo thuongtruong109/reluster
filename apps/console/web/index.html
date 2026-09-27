@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Bảng điều khiển Redis Cluster và Sentinel cho Reluster." />
+    <title>Reluster Console</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand-mark" aria-hidden="true">R</div>
+      <div class="brand-copy">
+        <p class="eyebrow">RELUSTER / CONTROL PLANE</p>
+        <h1>Redis operations, trong một màn hình.</h1>
+      </div>
+      <div class="header-status">
+        <time id="last-updated">Chưa đồng bộ</time>
+        <div class="connection-pill" id="connection-status">
+          <span class="status-dot"></span>
+          <span>Đang kết nối</span>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="toolbar" aria-label="Điều khiển dashboard">
+        <div class="mode-switch" role="group" aria-label="Chế độ Redis">
+          <button class="mode-button is-active" type="button" data-mode="cluster" aria-pressed="true">Cluster</button>
+          <button class="mode-button" type="button" data-mode="sentinel" aria-pressed="false">Sentinel</button>
+        </div>
+        <div class="toolbar-actions">
+          <label class="auto-refresh">
+            <input id="auto-refresh" type="checkbox" checked />
+            <span>Tự làm mới</span>
+          </label>
+          <button class="button button--ghost" type="button" id="refresh-button">
+            <span aria-hidden="true">↻</span> Làm mới
+          </button>
+        </div>
+      </section>
+
+      <div class="notice" id="notice" role="status" hidden>
+        <strong id="notice-title"></strong>
+        <span id="notice-message"></span>
+      </div>
+
+      <section class="metric-grid" aria-label="Chỉ số tổng quan">
+        <article class="metric-card metric-card--state">
+          <span>Trạng thái</span>
+          <strong id="metric-state">Đang tải</strong>
+          <small id="metric-state-detail">Kiểm tra kết nối Redis</small>
+        </article>
+        <article class="metric-card">
+          <span id="metric-nodes-label">Nodes</span>
+          <strong id="metric-nodes">—</strong>
+          <small id="metric-nodes-detail">Master và replica</small>
+        </article>
+        <article class="metric-card">
+          <span id="metric-coverage-label">Slot coverage</span>
+          <strong id="metric-coverage">—</strong>
+          <small id="metric-coverage-detail">trên 16.384 slots</small>
+        </article>
+        <article class="metric-card">
+          <span>Memory</span>
+          <strong id="metric-memory">—</strong>
+          <small>Tổng dung lượng đang dùng</small>
+        </article>
+        <article class="metric-card">
+          <span>Clients</span>
+          <strong id="metric-clients">—</strong>
+          <small>Kết nối đang hoạt động</small>
+        </article>
+        <article class="metric-card metric-card--chart">
+          <span>Throughput</span>
+          <strong id="metric-ops">—</strong>
+          <small>operations / second</small>
+          <svg id="ops-chart" viewBox="0 0 180 34" role="img" aria-label="Lịch sử throughput"></svg>
+        </article>
+      </section>
+
+      <section class="workspace-grid">
+        <article class="panel topology-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">LIVE TOPOLOGY</p>
+              <h2 id="topology-title">Cluster map</h2>
+            </div>
+            <span class="tag" id="topology-tag">Đang tải</span>
+          </div>
+          <div class="node-grid" id="node-grid" aria-live="polite">
+            <div class="skeleton node-skeleton"></div>
+            <div class="skeleton node-skeleton"></div>
+            <div class="skeleton node-skeleton"></div>
+          </div>
+        </article>
+
+        <aside class="panel action-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">CONTROL ROOM</p>
+              <h2>Demo controls</h2>
+            </div>
+            <span class="tag" id="write-mode-tag">Đang tải</span>
+          </div>
+          <button class="action-card" type="button" id="seed-button">
+            <span class="action-icon" aria-hidden="true">＋</span>
+            <span><strong>Seed demo data</strong><small>Tạo sáu key an toàn trong demo:*</small></span>
+          </button>
+          <button class="action-card action-card--danger" type="button" id="failover-button">
+            <span class="action-icon" aria-hidden="true">⇄</span>
+            <span><strong>Sentinel failover</strong><small>Chuyển master với xác nhận hai bước</small></span>
+          </button>
+          <div class="tool-links" id="tool-links" aria-label="Công cụ giám sát"></div>
+          <p class="safety-note">Thao tác ghi chỉ áp dụng cho <code>demo:*</code>. Mật khẩu Redis được giữ bên trong backend.</p>
+        </aside>
+      </section>
+
+      <section class="data-grid">
+        <article class="panel key-panel">
+          <div class="panel-heading key-heading">
+            <div>
+              <p class="eyebrow">DATA EXPLORER</p>
+              <h2>Keys trong namespace <code id="key-prefix">demo:*</code></h2>
+            </div>
+            <button class="button button--primary" type="button" id="new-key-button">Tạo key</button>
+          </div>
+          <div class="key-toolbar">
+            <label class="search-field">
+              <span class="sr-only">Tìm key</span>
+              <span aria-hidden="true">⌕</span>
+              <input id="key-search" type="search" placeholder="Tìm theo phần còn lại của tên key" autocomplete="off" />
+            </label>
+            <span id="key-count">0 keys</span>
+          </div>
+          <div class="key-workbench">
+            <div class="key-list" id="key-list" role="listbox" aria-label="Danh sách Redis keys">
+              <div class="empty-inline">Chưa có dữ liệu.</div>
+            </div>
+            <div class="key-detail" id="key-detail">
+              <div class="empty-state empty-state--compact">
+                <span class="empty-symbol" aria-hidden="true">{ }</span>
+                <h3>Chọn một key để xem dữ liệu</h3>
+                <p>Value, kiểu dữ liệu và TTL sẽ xuất hiện tại đây.</p>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <aside class="panel event-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">AUDIT TRAIL</p>
+              <h2>Hoạt động gần đây</h2>
+            </div>
+          </div>
+          <ol class="event-list" id="event-list">
+            <li class="empty-inline">Chưa có thao tác ghi.</li>
+          </ol>
+        </aside>
+      </section>
+
+      <section class="panel sentinel-panel" id="sentinel-panel" hidden>
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">SENTINEL QUORUM</p>
+            <h2>Observers</h2>
+          </div>
+          <span class="tag" id="sentinel-master">Chưa xác định master</span>
+        </div>
+        <div class="sentinel-grid" id="sentinel-grid"></div>
+      </section>
+    </main>
+
+    <dialog class="dialog" id="key-dialog">
+      <form method="dialog" id="key-form">
+        <div class="dialog-heading">
+          <div><p class="eyebrow">DATA EXPLORER</p><h2>Tạo hoặc cập nhật key</h2></div>
+          <button class="icon-button" type="button" data-close-dialog="key-dialog" aria-label="Đóng">×</button>
+        </div>
+        <label class="field"><span>Key</span><input id="key-name" name="key" required maxlength="200" /></label>
+        <label class="field"><span>Value</span><textarea id="key-value" name="value" rows="6" required maxlength="16384"></textarea></label>
+        <label class="field"><span>TTL (giây, 0 là không hết hạn)</span><input id="key-ttl" name="ttl" type="number" min="0" max="86400" value="600" required /></label>
+        <div class="dialog-actions">
+          <button class="button button--ghost" type="button" data-close-dialog="key-dialog">Hủy</button>
+          <button class="button button--primary" type="submit">Lưu key</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog" id="failover-dialog">
+      <form method="dialog" id="failover-form">
+        <div class="dialog-heading">
+          <div><p class="eyebrow eyebrow--danger">DISRUPTIVE ACTION</p><h2>Xác nhận Sentinel failover</h2></div>
+          <button class="icon-button" type="button" data-close-dialog="failover-dialog" aria-label="Đóng">×</button>
+        </div>
+        <p class="dialog-copy">Sentinel sẽ chọn một replica làm master mới. Kết nối có thể gián đoạn trong vài giây.</p>
+        <label class="field"><span>Nhập <strong>FAILOVER</strong> để tiếp tục</span><input id="failover-confirm" autocomplete="off" required /></label>
+        <div class="dialog-actions">
+          <button class="button button--ghost" type="button" data-close-dialog="failover-dialog">Hủy</button>
+          <button class="button button--danger" type="submit">Yêu cầu failover</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>
