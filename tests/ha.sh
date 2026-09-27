@@ -125,6 +125,15 @@ if [ -z "$NEW_MASTER" ]; then
 fi
 log "✅ New master is $NEW_MASTER"
 
+SENTINEL_MASTER_ADDRESS=$(docker exec sentinel_1 redis-cli -p 26379 --raw SENTINEL get-master-addr-by-name mymaster)
+NEW_MASTER_HOST=$(printf '%s\n' "$SENTINEL_MASTER_ADDRESS" | sed -n '1p' | tr -d '\r')
+NEW_MASTER_PORT=$(printf '%s\n' "$SENTINEL_MASTER_ADDRESS" | sed -n '2p' | tr -d '\r')
+if [ -z "$NEW_MASTER_HOST" ] || [ -z "$NEW_MASTER_PORT" ]; then
+  log "❌ Sentinel did not return the promoted master address"
+  exit 1
+fi
+log "✅ Sentinel reports the new master at $NEW_MASTER_HOST:$NEW_MASTER_PORT"
+
 # --- Ensure all slaves are replicating from new master ---
 for host in slave_1 slave_2 slave_3; do
   if [ "$host" != "$NEW_MASTER" ]; then
@@ -183,16 +192,18 @@ log "✅ Replication after failover verified"
 log "Restarting old master..."
 docker start redis-master
 
-# --- Ensure old master rejoins as slave ---
+# --- Ensure old master rejoins the exact Sentinel-elected master as a slave ---
 joined=0
 for _ in $(seq 1 60); do
   ROLE=$(redis_cli redis-master info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
-  if [ "$ROLE" = "slave" ]; then
-    log "✅ Old master rejoined as slave"
+  FOLLOWING_HOST=$(redis_cli redis-master info replication | grep "^master_host:" | cut -d: -f2 | tr -d '[:space:]' || true)
+  LINK_STATUS=$(redis_cli redis-master info replication | grep "^master_link_status:" | cut -d: -f2 | tr -d '[:space:]' || true)
+  if [ "$ROLE" = "slave" ] && [ "$FOLLOWING_HOST" = "$NEW_MASTER_HOST" ] && [ "$LINK_STATUS" = "up" ]; then
+    log "✅ Old master rejoined as a slave of $NEW_MASTER_HOST:$NEW_MASTER_PORT"
     joined=1
     break
   fi
-  log "⏳ Waiting for old master to rejoin as slave..."
+  log "⏳ Waiting for old master to follow $NEW_MASTER_HOST (role=$ROLE, master=$FOLLOWING_HOST, link=$LINK_STATUS)..."
   sleep 2
 done
 
@@ -201,6 +212,16 @@ if [ $joined -ne 1 ]; then
   redis_cli redis-master info replication || true
   exit 1
 fi
+
+VALUE=$(redis_cli redis-master get failoverkey || true)
+if [ "$VALUE" != "failovervalue" ]; then
+  log "❌ Old master rejoined but did not synchronize data from the promoted master"
+  exit 1
+fi
+log "✅ Old master synchronized writes made during the failover"
+
+redis_cli "$NEW_MASTER" del testkey failoverkey >/dev/null
+log "✅ Removed failover test keys"
 
 log "🎉 All integration tests passed"
 exit 0

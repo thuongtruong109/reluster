@@ -21,7 +21,7 @@ LOG_DIR=monitor-logs
 
 format:
 	@dos2unix Makefile
-	@sed -i 's/\r$$//' Makefile configs/ha/sentinel/sentinel.conf configs/ha/replica/slave.conf configs/ha/replica/master.conf configs/cluster/node.conf
+	@sed -i 's/\r$$//' Makefile configs/ha/entrypoint.sh configs/ha/role-discovery.sh configs/ha/sentinel/sentinel.conf configs/ha/replica/redis.conf configs/cluster/node.conf
 
 validate:
 	docker compose -f $(HA_COMPOSE_FILE) config --quiet

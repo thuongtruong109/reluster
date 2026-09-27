@@ -1,12 +1,19 @@
+x-redis-environment: &redis-environment
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+  REDIS_MASTER_HOST: ${REDIS_MASTER_HOST:-172.28.0.10}
+  REDIS_SENTINEL_HOSTS: sentinel_1:26379,sentinel_2:26379,sentinel_3:26379
+  REDIS_SENTINEL_MASTER_NAME: mymaster
+  REDIS_SENTINEL_DISCOVERY_TIMEOUT: ${REDIS_SENTINEL_DISCOVERY_TIMEOUT:-15}
+
 x-redis-common: &redis-common
   build:
     context: .
     dockerfile: ./configs/ha/replica/Dockerfile
   image: thuongtruong1009/reluster-replica
   restart: always
-  environment:
-    REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-    REDIS_MASTER_HOST: ${REDIS_MASTER_HOST:-172.28.0.10}
+  environment: *redis-environment
+  volumes:
+    - ./configs/ha/replica/redis.conf:/etc/redis/redis.conf.template:ro
 
 x-sentinel-common: &sentinel-common
   build:
@@ -24,8 +31,10 @@ services:
   redis-master:
     <<: *redis-common
     container_name: redis-master
-    volumes:
-      - ./configs/ha/replica/master.conf:/etc/redis/redis.conf.template:ro
+    environment:
+      <<: *redis-environment
+      REDIS_BOOTSTRAP_ROLE: master
+      REDIS_NODE_HOST: ${REDIS_MASTER_HOST:-172.28.0.10}
     ports:
       - "6379:6379"
     networks:
@@ -40,8 +49,10 @@ services:
   slave_1:
     <<: *redis-common
     container_name: slave_1
-    volumes:
-      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf.template:ro
+    environment:
+      <<: *redis-environment
+      REDIS_BOOTSTRAP_ROLE: replica
+      REDIS_NODE_HOST: 172.28.0.11
     ports:
       - "6380:6379"
     networks:
@@ -53,8 +64,10 @@ services:
   slave_2:
     <<: *redis-common
     container_name: slave_2
-    volumes:
-      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf.template:ro
+    environment:
+      <<: *redis-environment
+      REDIS_BOOTSTRAP_ROLE: replica
+      REDIS_NODE_HOST: 172.28.0.12
     ports:
       - "6381:6379"
     networks:
@@ -66,8 +79,10 @@ services:
   slave_3:
     <<: *redis-common
     container_name: slave_3
-    volumes:
-      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf.template:ro
+    environment:
+      <<: *redis-environment
+      REDIS_BOOTSTRAP_ROLE: replica
+      REDIS_NODE_HOST: 172.28.0.13
     ports:
       - "6382:6379"
     networks:
@@ -105,7 +120,7 @@ services:
 
 networks:
   redisnet:
-    name: redisnet
+    name: ${REDIS_NETWORK:-redisnet}
     driver: bridge
     ipam:
       config:

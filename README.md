@@ -81,6 +81,14 @@ for configuration and development details.
 
 ### 🔹 Sentinel Mode (HA + Replica Failover)
 
+Every Redis data node resolves the current master from Sentinel before Redis
+starts. The master and replicas share one role-neutral configuration template;
+the entrypoint adds `replicaof` only when the node is not the Sentinel-elected
+master. Therefore, after failover, restarting the former master makes it follow
+the promoted replica instead of starting a second independent master. An
+already-initialized node also refuses to start standalone when all Sentinels are
+unreachable, preventing an unsafe split-brain fallback.
+
 ```mermaid
 flowchart TD
    S1["🛰️ Sentinel 1"]
