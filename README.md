@@ -36,6 +36,32 @@ This project provides a **hands-on Redis lab** that covers both **Sentinel** and
 - ✔ Failover Testing – Simulate node failures and observe automatic recovery
 - ✔ Scaling – Add/remove nodes and reshard data with minimal downtime
 - ✔ Monitoring Stack - Redis-Commander, Redis-Exporter, Prometheus, Grafana for real-time insights
+- ✔ Reluster Console - Unified Cluster/Sentinel topology, metrics, safe demo data management, and controlled failover
+
+## 🖥️ Reluster Console
+
+Reluster Console provides one local dashboard for both Redis modes. It shows
+node roles, slot coverage, Sentinel quorum, the active master, memory, clients,
+throughput, and a safe `demo:*` key explorer. Redis credentials remain in the
+backend and the web UI is bound to localhost by default.
+
+Start Redis first, then the Console:
+
+```bash
+# Cluster mode
+make clt
+make clt-init
+make console
+
+# Or Sentinel mode
+make ha
+make console
+```
+
+Open <http://localhost:8080>. Key writes are limited to `demo:*`. Sentinel
+failover is disabled by default; set `CONSOLE_FAILOVER_ENABLED=true` in `.env`
+when you intentionally want to run that demo. See [the Console guide](apps/console/README.md)
+for configuration and development details.
 
 <!-- - ✔ Security – Basic auth, TLS setup examples -->
 <!-- - ✔ Multi-Platform – Works on Linux, macOS, Windows (WSL2/Docker Desktop) -->
@@ -54,6 +80,26 @@ This project provides a **hands-on Redis lab** that covers both **Sentinel** and
 ## 🏗️ Architecture
 
 ### 🔹 Sentinel Mode (HA + Replica Failover)
+
+Every Redis data node resolves the current master from Sentinel before Redis
+starts. The master and replicas share one role-neutral configuration template;
+the entrypoint adds `replicaof` only when the node is not the Sentinel-elected
+master. Therefore, after failover, restarting the former master makes it follow
+the promoted replica instead of starting a second independent master. An
+already-initialized node also refuses to start standalone when all Sentinels are
+unreachable, preventing an unsafe split-brain fallback.
+
+Each data node owns a separate named volume mounted at `/data`:
+
+- `redis_master_data`
+- `redis_slave_1_data`
+- `redis_slave_2_data`
+- `redis_slave_3_data`
+
+This keeps AOF/RDB files across container replacement and `make ha-recreate`.
+Never mount the same `/data` volume into multiple Redis processes. `make clean`
+is intentionally destructive because it runs `docker compose down -v` and
+removes these volumes; use it only when the stored Redis data should be erased.
 
 ```mermaid
 flowchart TD
@@ -110,21 +156,75 @@ flowchart LR
 ## 🔐 Environment configuration
 
 Reluster does not ship with runtime passwords. Create a local `.env` file before
-running any Redis, Sentinel, Commander, or monitoring target:
+running the stack or its management tools:
 
 ```bash
 cp .env.example .env
 ```
 
-Set `REDIS_PASSWORD` to a strong random value. Set `GRAFANA_ADMIN_PASSWORD` as
-well when using `make monitor`. For example, `openssl rand -hex 32` generates a
-value that is safe to place in the Redis configuration templates. The `.env`
-file is ignored by Git and loaded by both Docker Compose and the Makefile. Keep
-`REDIS_MASTER_HOST` aligned with the master's static address in the HA network;
-the provided value works with the default Compose subnet.
+Set both `REDIS_PASSWORD` and `SENTINEL_PASSWORD` to strong, different random
+values. `REDIS_PASSWORD` protects the Redis data nodes and replication traffic;
+`SENTINEL_PASSWORD` protects Sentinel commands such as `SENTINEL FAILOVER` and
+`SENTINEL SET`. Set `GRAFANA_ADMIN_PASSWORD` as well when using `make monitor`.
+For example, `openssl rand -hex 32` generates a value that is safe to place in
+the configuration templates. The `.env` file is ignored by Git and loaded by
+both Docker Compose and the Makefile. `REDIS_MASTER_SERVICE` defaults to the
+Compose service `redis-master`, which is resolved by Docker DNS and does not
+depend on a container IP. The old IP-based `REDIS_MASTER_HOST` setting is no
+longer used by Compose.
 
-CI uses the `REDIS_PASSWORD` repository secret when available and creates an
-isolated per-run fallback credential for untrusted pull requests.
+The HA Compose file publishes Sentinel only on the host loopback addresses
+`127.0.0.1:26379-26381`; containers continue to communicate over the private
+`redisnet` network. Password authentication and loopback binding are suitable
+defaults for the local lab. A production deployment should additionally use a
+dedicated management network, firewall policy, Redis ACL users with least
+privilege, and TLS for traffic that crosses a trusted boundary.
+
+HA services intentionally have no fixed `container_name`, `ipv4_address`, or
+custom subnet. Redis bootstrap uses Docker DNS service names, while Sentinel
+may return the current node IP dynamically after a failover. Operational scripts
+target Compose service identities, so container recreation and IP changes do
+not invalidate `exec`, health, backup, or failover commands. For Swarm or
+Kubernetes, replace the Compose DNS layer with the platform's Service and
+StatefulSet identities rather than assigning pod/container IPs manually.
+
+When upgrading an existing checkout, remove the old
+`REDIS_MASTER_HOST=172.28.0.10` entry from `.env` and optionally replace it with
+`REDIS_MASTER_SERVICE=redis-master`, then run `make ha-recreate`. Recreating the
+services keeps the named Redis data volumes; only `make clean` removes them.
+
+## 🛡️ Write durability policy
+
+HA and Cluster nodes default to:
+
+```env
+REDIS_MIN_REPLICAS_TO_WRITE=1
+REDIS_MIN_REPLICAS_MAX_LAG=10
+```
+
+A master accepts writes only while at least one replica is connected and has
+communicated with it within the configured 10-second lag window. Otherwise Redis returns
+`NOREPLICAS`; this bounds the likely data-loss window but does not make Redis
+replication synchronous or eliminate every failover loss scenario. Set
+`REDIS_MIN_REPLICAS_TO_WRITE=0` only when write availability is more important
+than this safety guard.
+
+The Sentinel layout has three replicas, so a promoted master can normally retain
+another healthy replica. The six-node Cluster layout has one replica per master;
+after promotion, writes for that shard remain blocked until another replica is
+attached or the failed node rejoins. Production deployments that require both
+continued writes and this guard should provision at least two replicas per
+master.
+
+Reluster Console maps `NOREPLICAS`, `MASTERDOWN`, `READONLY`, and `CLUSTERDOWN`
+to retryable `503` responses. It does not automatically replay mutations after
+a failover because a disconnected client may not know whether a prior write was
+applied. For critical application writes, consider `WAIT` or `WAITAOF` on the
+same Redis connection and verify the returned acknowledgement count.
+
+CI uses the `REDIS_PASSWORD` and `SENTINEL_PASSWORD` repository secrets when
+available and creates isolated per-run fallback credentials for untrusted pull
+requests.
 
 ## 🤝 Contributing
 

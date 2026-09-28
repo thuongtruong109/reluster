@@ -3,8 +3,11 @@ include .env
 endif
 
 export REDIS_PASSWORD
+export SENTINEL_PASSWORD
+export REDIS_MIN_REPLICAS_TO_WRITE
+export REDIS_MIN_REPLICAS_MAX_LAG
 export GRAFANA_ADMIN_PASSWORD
-.PHONY: format validate commander commander-ha commander-clt ha ha-cli ha-ready ha-scan ha-master ha-slave ha-test-failover ha-test ha-bench ha-backup ha-health clt clt-cli clt-init clt-ready clt-monitor clt-scan clt-test clt-bench clt-rollback clt-scale clt-health clean ci
+.PHONY: format validate console console-logs commander commander-ha commander-clt ha ha-recreate ha-cli ha-ready ha-scan ha-master ha-slave ha-test-failover ha-test ha-bench ha-backup ha-health clt clt-cli clt-init clt-ready clt-monitor clt-scan clt-test clt-bench clt-rollback clt-scale clt-health clean ci
 
 HA_COMPOSE_FILE = docker-compose.ha.yml
 CLT_COMPOSE_FILE = docker-compose.cluster.yml
@@ -21,7 +24,7 @@ LOG_DIR=monitor-logs
 
 format:
 	@dos2unix Makefile
-	@sed -i 's/\r$$//' Makefile configs/ha/sentinel/sentinel.conf configs/ha/replica/slave.conf configs/ha/replica/master.conf configs/cluster/node.conf
+	@sed -i 's/\r$$//' Makefile configs/ha/entrypoint.sh configs/ha/role-discovery.sh configs/ha/sentinel/sentinel.conf configs/ha/replica/redis.conf configs/cluster/node.conf
 
 validate:
 	docker compose -f $(HA_COMPOSE_FILE) config --quiet
@@ -34,10 +37,13 @@ validate:
 	bash scripts/clt.sh validate
 
 ha:
-	docker compose -f $(HA_COMPOSE_FILE) up -d --force-recreate
+	docker compose -f $(HA_COMPOSE_FILE) up -d --build
+
+ha-recreate:
+	docker compose -f $(HA_COMPOSE_FILE) up -d --build --force-recreate
 
 ha-cli:
-	docker exec -it -e REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-master redis-cli -p 6379
+	docker compose -f $(HA_COMPOSE_FILE) exec -e REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-master redis-cli -p 6379
 
 ha-ready:
 	chmod +x scripts/ha.sh
@@ -48,10 +54,10 @@ ha-scan:
 	bash scripts/ha.sh scan
 
 ha-master:
-	docker exec -it sentinel_1 redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
+	docker compose -f $(HA_COMPOSE_FILE) exec -e REDISCLI_AUTH="$${SENTINEL_PASSWORD}" sentinel_1 redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
 
 ha-slave:
-	docker exec -it -e REDISCLI_AUTH="$${REDIS_PASSWORD}" slave_1 redis-cli info replication
+	docker compose -f $(HA_COMPOSE_FILE) exec -e REDISCLI_AUTH="$${REDIS_PASSWORD}" slave_1 redis-cli info replication
 
 ha-test-failover:
 	chmod +x tests/ha-failover.sh
@@ -168,6 +174,17 @@ monitor:
 monitor-health:
 	chmod +x scripts/monitor.sh
 	LOG_DIR=$(LOG_DIR) bash ./scripts/monitor.sh
+
+console:
+	@if [ -z "$$REDIS_PASSWORD" ]; then \
+		echo "❌ REDIS_PASSWORD is not set."; \
+		exit 1; \
+	fi
+	docker compose -f $(TOOL_COMPOSE_FILE) up -d --build --force-recreate console
+	@echo "Reluster Console: http://localhost:$${CONSOLE_PORT:-8080}"
+
+console-logs:
+	docker compose -f $(TOOL_COMPOSE_FILE) logs -f console
 
 demo-ping:
 # 	docker compose -f docker-compose.cluster.dev.yml up -d --build --force-recreate node-1 node-2 node-3 node-4 node-5 node-6

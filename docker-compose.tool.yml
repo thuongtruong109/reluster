@@ -1,7 +1,26 @@
 services:
+  console:
+    build:
+      context: ./apps/console
+      dockerfile: api/Dockerfile
+    image: reluster-console:local
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      SENTINEL_PASSWORD: ${SENTINEL_PASSWORD:-}
+      CONSOLE_WRITE_ENABLED: ${CONSOLE_WRITE_ENABLED:-true}
+      CONSOLE_FAILOVER_ENABLED: ${CONSOLE_FAILOVER_ENABLED:-false}
+      CONSOLE_KEY_PREFIX: ${CONSOLE_KEY_PREFIX:-demo:}
+      CONSOLE_CLUSTER_NODES: node-1:6379,node-2:6379,node-3:6379,node-4:6379,node-5:6379,node-6:6379
+      CONSOLE_SENTINEL_NODES: sentinel_1:26379,sentinel_2:26379,sentinel_3:26379
+      CONSOLE_SENTINEL_MASTER: mymaster
+    ports:
+      - "127.0.0.1:${CONSOLE_PORT:-8080}:8080"
+    networks:
+      - redisnet
+
   commander:
     image: rediscommander/redis-commander:latest
-    container_name: commander
     restart: unless-stopped
     environment:
       REDIS_HOSTS: ${COMMANDER_REDIS_HOSTS:-}
@@ -12,7 +31,6 @@ services:
 
   exporter:
     image: oliver006/redis_exporter:v1.50.0
-    container_name: exporter
     networks:
       - redisnet
     environment:
@@ -28,7 +46,6 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.47.0
-    container_name: prometheus
     networks:
       - redisnet
     volumes:
@@ -40,7 +57,6 @@ services:
 
   grafana:
     image: grafana/grafana:10.2.3
-    container_name: grafana
     networks:
       - redisnet
     environment:
@@ -55,3 +71,4 @@ services:
 networks:
   redisnet:
     external: true
+    name: ${REDIS_NETWORK:-redisnet}

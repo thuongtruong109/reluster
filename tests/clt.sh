@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+CLUSTER_PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=configs/common/write-durability.sh
+source "$CLUSTER_PROJECT_DIR/configs/common/write-durability.sh"
+
 : "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+configure_write_durability
 
 function redis_cli() {
   local container="$1"
@@ -21,6 +26,14 @@ echo "🚀 Redis Cluster Test Suite"
 
 echo -e "\n[TEST 1] Cluster health check"
 redis_cli node-1 -c cluster info | grep cluster_state
+
+min_replicas=$(redis_cli node-1 --raw CONFIG GET min-replicas-to-write | sed -n '2p' | tr -d '\r')
+max_replica_lag=$(redis_cli node-1 --raw CONFIG GET min-replicas-max-lag | sed -n '2p' | tr -d '\r')
+if [ "$min_replicas" != "$REDIS_MIN_REPLICAS_TO_WRITE" ] || [ "$max_replica_lag" != "$REDIS_MIN_REPLICAS_MAX_LAG" ]; then
+  echo "Write durability configuration mismatch (replicas=$min_replicas, lag=$max_replica_lag)" >&2
+  exit 1
+fi
+echo "Write durability requires $min_replicas replica(s) within ${max_replica_lag}s lag"
 
 echo -e "\n[TEST 2] Key distribution"
 redis_cli node-1 -c set foo bar

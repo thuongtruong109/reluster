@@ -1,14 +1,29 @@
 #!/bin/sh
 set -e
 
+HA_PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export HA_PROJECT_DIR
+# shellcheck source=scripts/lib/ha-compose.sh
+. "$HA_PROJECT_DIR/scripts/lib/ha-compose.sh"
+# shellcheck source=configs/common/write-durability.sh
+. "$HA_PROJECT_DIR/configs/common/write-durability.sh"
+
 : "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+: "${SENTINEL_PASSWORD:?SENTINEL_PASSWORD must be set}"
+configure_write_durability
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
 redis_cli() {
   CONTAINER=$1
   shift
-  docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$CONTAINER" redis-cli "$@"
+  ha_exec "$CONTAINER" env REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli "$@"
+}
+
+sentinel_cli() {
+  CONTAINER=$1
+  shift
+  ha_exec "$CONTAINER" env REDISCLI_AUTH="$SENTINEL_PASSWORD" redis-cli -p 26379 "$@"
 }
 
 wait_for_ready() {
@@ -16,9 +31,9 @@ wait_for_ready() {
   PORT=$2
   log "⏳ Waiting for $CONTAINER to be ready on port $PORT..."
   for _ in $(seq 1 60); do
-    if docker ps --filter "name=$CONTAINER" --filter "status=running" --format '{{.Names}}' | grep -q "$CONTAINER"; then
+    if ha_service_running "$CONTAINER"; then
       case "$CONTAINER" in
-        sentinel_*) PONG=$(docker exec "$CONTAINER" redis-cli -p "$PORT" ping 2>/dev/null || true) ;;
+        sentinel_*) PONG=$(sentinel_cli "$CONTAINER" ping 2>/dev/null || true) ;;
         *) PONG=$(redis_cli "$CONTAINER" -p "$PORT" ping 2>/dev/null || true) ;;
       esac
       if [ "$PONG" = "PONG" ]; then
@@ -32,8 +47,9 @@ wait_for_ready() {
         ROLE=$(redis_cli "$CONTAINER" -p "$PORT" info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
         if [ "$ROLE" = "slave" ]; then
           MASTER_HOST=$(redis_cli "$CONTAINER" -p "$PORT" info replication | grep "^master_host:" | cut -d: -f2 | tr -d '[:space:]' || true)
-          if [ -n "$MASTER_HOST" ] && [ "$MASTER_HOST" != "?" ]; then
-            log "✅ $CONTAINER is ready (role=slave, master=$MASTER_HOST)"
+          LINK_STATUS=$(redis_cli "$CONTAINER" -p "$PORT" info replication | grep "^master_link_status:" | cut -d: -f2 | tr -d '[:space:]' || true)
+          if [ -n "$MASTER_HOST" ] && [ "$MASTER_HOST" != "?" ] && [ "$LINK_STATUS" = "up" ]; then
+            log "✅ $CONTAINER is ready (role=slave, master=$MASTER_HOST, link=up)"
             return 0
           fi
         else
@@ -45,7 +61,7 @@ wait_for_ready() {
     sleep 2
   done
   log "❌ $CONTAINER did not become ready"
-  docker logs "$CONTAINER" || true
+  ha_compose logs "$CONTAINER" || true
   exit 1
 }
 
@@ -77,6 +93,14 @@ if [ $success -ne 1 ]; then
 fi
 log "✅ Detected current master: $NEW_MASTER"
 
+MIN_REPLICAS=$(redis_cli "$NEW_MASTER" --raw CONFIG GET min-replicas-to-write | sed -n '2p' | tr -d '\r')
+MAX_REPLICA_LAG=$(redis_cli "$NEW_MASTER" --raw CONFIG GET min-replicas-max-lag | sed -n '2p' | tr -d '\r')
+if [ "$MIN_REPLICAS" != "$REDIS_MIN_REPLICAS_TO_WRITE" ] || [ "$MAX_REPLICA_LAG" != "$REDIS_MIN_REPLICAS_MAX_LAG" ]; then
+  log "❌ Write durability configuration mismatch (replicas=$MIN_REPLICAS, lag=$MAX_REPLICA_LAG)"
+  exit 1
+fi
+log "✅ Write durability requires $MIN_REPLICAS replica(s) within ${MAX_REPLICA_LAG}s lag"
+
 # --- Check replication ---
 log "Testing replication to slaves..."
 for host in slave_1 slave_2 slave_3; do
@@ -98,10 +122,10 @@ done
 log "✅ Replication verified"
 
 log "Simulating master failure..."
-docker stop redis-master
+ha_compose stop redis-master
 
 log "Triggering manual failover..."
-docker exec sentinel_1 redis-cli -p 26379 sentinel failover mymaster || true
+sentinel_cli sentinel_1 sentinel failover mymaster || true
 
 # --- Detect new master ---
 NEW_MASTER=""
@@ -119,11 +143,20 @@ done
 
 if [ -z "$NEW_MASTER" ]; then
   log "❌ Failover failed: no new master detected"
-  docker exec sentinel_1 redis-cli -p 26379 sentinel master mymaster || true
-  docker exec sentinel_1 redis-cli -p 26379 sentinel slaves mymaster || true
+  sentinel_cli sentinel_1 sentinel master mymaster || true
+  sentinel_cli sentinel_1 sentinel slaves mymaster || true
   exit 1
 fi
 log "✅ New master is $NEW_MASTER"
+
+SENTINEL_MASTER_ADDRESS=$(sentinel_cli sentinel_1 --raw SENTINEL get-master-addr-by-name mymaster)
+NEW_MASTER_HOST=$(printf '%s\n' "$SENTINEL_MASTER_ADDRESS" | sed -n '1p' | tr -d '\r')
+NEW_MASTER_PORT=$(printf '%s\n' "$SENTINEL_MASTER_ADDRESS" | sed -n '2p' | tr -d '\r')
+if [ -z "$NEW_MASTER_HOST" ] || [ -z "$NEW_MASTER_PORT" ]; then
+  log "❌ Sentinel did not return the promoted master address"
+  exit 1
+fi
+log "✅ Sentinel reports the new master at $NEW_MASTER_HOST:$NEW_MASTER_PORT"
 
 # --- Ensure all slaves are replicating from new master ---
 for host in slave_1 slave_2 slave_3; do
@@ -181,18 +214,20 @@ done
 log "✅ Replication after failover verified"
 
 log "Restarting old master..."
-docker start redis-master
+ha_compose start redis-master
 
-# --- Ensure old master rejoins as slave ---
+# --- Ensure old master rejoins the exact Sentinel-elected master as a slave ---
 joined=0
 for _ in $(seq 1 60); do
   ROLE=$(redis_cli redis-master info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
-  if [ "$ROLE" = "slave" ]; then
-    log "✅ Old master rejoined as slave"
+  FOLLOWING_HOST=$(redis_cli redis-master info replication | grep "^master_host:" | cut -d: -f2 | tr -d '[:space:]' || true)
+  LINK_STATUS=$(redis_cli redis-master info replication | grep "^master_link_status:" | cut -d: -f2 | tr -d '[:space:]' || true)
+  if [ "$ROLE" = "slave" ] && [ "$FOLLOWING_HOST" = "$NEW_MASTER_HOST" ] && [ "$LINK_STATUS" = "up" ]; then
+    log "✅ Old master rejoined as a slave of $NEW_MASTER_HOST:$NEW_MASTER_PORT"
     joined=1
     break
   fi
-  log "⏳ Waiting for old master to rejoin as slave..."
+  log "⏳ Waiting for old master to follow $NEW_MASTER_HOST (role=$ROLE, master=$FOLLOWING_HOST, link=$LINK_STATUS)..."
   sleep 2
 done
 
@@ -201,6 +236,16 @@ if [ $joined -ne 1 ]; then
   redis_cli redis-master info replication || true
   exit 1
 fi
+
+VALUE=$(redis_cli redis-master get failoverkey || true)
+if [ "$VALUE" != "failovervalue" ]; then
+  log "❌ Old master rejoined but did not synchronize data from the promoted master"
+  exit 1
+fi
+log "✅ Old master synchronized writes made during the failover"
+
+redis_cli "$NEW_MASTER" del testkey failoverkey >/dev/null
+log "✅ Removed failover test keys"
 
 log "🎉 All integration tests passed"
 exit 0

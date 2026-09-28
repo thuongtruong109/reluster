@@ -1,12 +1,25 @@
+x-redis-environment: &redis-environment
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+  SENTINEL_PASSWORD: ${SENTINEL_PASSWORD:?SENTINEL_PASSWORD must be set}
+  REDIS_MASTER_HOST: ${REDIS_MASTER_SERVICE:-redis-master}
+  REDIS_SENTINEL_HOSTS: sentinel_1:26379,sentinel_2:26379,sentinel_3:26379
+  REDIS_SENTINEL_MASTER_NAME: mymaster
+  REDIS_SENTINEL_DISCOVERY_TIMEOUT: ${REDIS_SENTINEL_DISCOVERY_TIMEOUT:-15}
+  REDIS_MIN_REPLICAS_TO_WRITE: ${REDIS_MIN_REPLICAS_TO_WRITE:-1}
+  REDIS_MIN_REPLICAS_MAX_LAG: ${REDIS_MIN_REPLICAS_MAX_LAG:-10}
+
 x-redis-common: &redis-common
   build:
     context: .
     dockerfile: ./configs/ha/replica/Dockerfile
   image: thuongtruong1009/reluster-replica
   restart: always
-  environment:
-    REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-    REDIS_MASTER_HOST: ${REDIS_MASTER_HOST:-172.28.0.10}
+  environment: *redis-environment
+
+x-sentinel-environment: &sentinel-environment
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+  SENTINEL_PASSWORD: ${SENTINEL_PASSWORD:?SENTINEL_PASSWORD must be set}
+  REDIS_MASTER_HOST: ${REDIS_MASTER_SERVICE:-redis-master}
 
 x-sentinel-common: &sentinel-common
   build:
@@ -14,23 +27,29 @@ x-sentinel-common: &sentinel-common
     dockerfile: ./configs/ha/sentinel/Dockerfile
   image: thuongtruong1009/reluster-sentinel
   restart: always
-  environment:
-    REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-    REDIS_MASTER_HOST: ${REDIS_MASTER_HOST:-172.28.0.10}
+  environment: *sentinel-environment
+  healthcheck:
+    test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${SENTINEL_PASSWORD}\" redis-cli -p 26379 ping"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
   depends_on:
     - redis-master
 
 services:
   redis-master:
     <<: *redis-common
-    container_name: redis-master
+    environment:
+      <<: *redis-environment
+      REDIS_BOOTSTRAP_ROLE: master
+      REDIS_NODE_HOST: redis-master
     volumes:
-      - ./configs/ha/replica/master.conf:/etc/redis/redis.conf.template:ro
+      - ./configs/ha/replica/redis.conf:/etc/redis/redis.conf.template:ro
+      - redis_master_data:/data
     ports:
       - "6379:6379"
     networks:
-      redisnet:
-        ipv4_address: ${REDIS_MASTER_HOST:-172.28.0.10}
+      - redisnet
     healthcheck:
       test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping"]
       interval: 5s
@@ -39,73 +58,89 @@ services:
 
   slave_1:
     <<: *redis-common
-    container_name: slave_1
+    environment:
+      <<: *redis-environment
+      REDIS_BOOTSTRAP_ROLE: replica
+      REDIS_NODE_HOST: slave_1
     volumes:
-      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf.template:ro
+      - ./configs/ha/replica/redis.conf:/etc/redis/redis.conf.template:ro
+      - redis_slave_1_data:/data
     ports:
       - "6380:6379"
     networks:
-      redisnet:
-        ipv4_address: 172.28.0.11
+      - redisnet
     depends_on:
       - redis-master
 
   slave_2:
     <<: *redis-common
-    container_name: slave_2
+    environment:
+      <<: *redis-environment
+      REDIS_BOOTSTRAP_ROLE: replica
+      REDIS_NODE_HOST: slave_2
     volumes:
-      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf.template:ro
+      - ./configs/ha/replica/redis.conf:/etc/redis/redis.conf.template:ro
+      - redis_slave_2_data:/data
     ports:
       - "6381:6379"
     networks:
-      redisnet:
-        ipv4_address: 172.28.0.12
+      - redisnet
     depends_on:
       - redis-master
 
   slave_3:
     <<: *redis-common
-    container_name: slave_3
+    environment:
+      <<: *redis-environment
+      REDIS_BOOTSTRAP_ROLE: replica
+      REDIS_NODE_HOST: slave_3
     volumes:
-      - ./configs/ha/replica/slave.conf:/etc/redis/redis.conf.template:ro
+      - ./configs/ha/replica/redis.conf:/etc/redis/redis.conf.template:ro
+      - redis_slave_3_data:/data
     ports:
       - "6382:6379"
     networks:
-      redisnet:
-        ipv4_address: 172.28.0.13
+      - redisnet
     depends_on:
       - redis-master
 
   sentinel_1:
     <<: *sentinel-common
-    container_name: sentinel_1
+    environment:
+      <<: *sentinel-environment
+      SENTINEL_ANNOUNCE_HOST: sentinel_1
     ports:
-      - "26379:26379"
+      - "127.0.0.1:26379:26379"
     networks:
-      redisnet:
-        ipv4_address: 172.28.0.20
+      - redisnet
 
   sentinel_2:
     <<: *sentinel-common
-    container_name: sentinel_2
+    environment:
+      <<: *sentinel-environment
+      SENTINEL_ANNOUNCE_HOST: sentinel_2
     ports:
-      - "26380:26379"
+      - "127.0.0.1:26380:26379"
     networks:
-      redisnet:
-        ipv4_address: 172.28.0.21
+      - redisnet
 
   sentinel_3:
     <<: *sentinel-common
-    container_name: sentinel_3
+    environment:
+      <<: *sentinel-environment
+      SENTINEL_ANNOUNCE_HOST: sentinel_3
     ports:
-      - "26381:26379"
+      - "127.0.0.1:26381:26379"
     networks:
-      redisnet:
-        ipv4_address: 172.28.0.22
+      - redisnet
 
 networks:
   redisnet:
+    name: ${REDIS_NETWORK:-redisnet}
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.28.0.0/16
+
+volumes:
+  redis_master_data:
+  redis_slave_1_data:
+  redis_slave_2_data:
+  redis_slave_3_data:

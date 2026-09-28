@@ -3,6 +3,9 @@ set -eu
 
 : "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
 
+. /usr/local/lib/reluster/write-durability.sh
+configure_write_durability
+
 # If REDIS_HOST is not set, use the current container's hostname.
 if [ -z "${REDIS_HOST:-}" ]; then
     REDIS_HOST=$(hostname)
@@ -19,7 +22,7 @@ REDIS_HOST="$resolved_redis_host"
 export REDIS_HOST
 
 umask 077
-envsubst '${REDIS_PASSWORD} ${REDIS_HOST}' < /etc/redis/node.conf > /etc/redis/redis.conf
+envsubst '${REDIS_PASSWORD} ${REDIS_HOST} ${REDIS_MIN_REPLICAS_TO_WRITE} ${REDIS_MIN_REPLICAS_MAX_LAG}' < /etc/redis/node.conf > /etc/redis/redis.conf
 
 if [ "$(id -u)" = "0" ]; then
     chown redis:redis /etc/redis/redis.conf

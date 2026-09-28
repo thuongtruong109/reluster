@@ -9,6 +9,7 @@ on:
 
 env:
   REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD || format('reluster-ci-{0}-{1}', github.run_id, github.run_attempt) }}
+  SENTINEL_PASSWORD: ${{ secrets.SENTINEL_PASSWORD || format('reluster-sentinel-ci-{0}-{1}', github.run_id, github.run_attempt) }}
 
 jobs:
   lint-and-validate:
