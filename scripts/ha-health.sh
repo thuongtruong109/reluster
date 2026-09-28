@@ -11,7 +11,9 @@ NC='\033[0m' # No Color
 MASTER_HOST="${REDIS_MASTER_HOST:-172.28.0.10}"
 MASTER_PORT="6379"
 : "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+: "${SENTINEL_PASSWORD:?SENTINEL_PASSWORD must be set}"
 MASTER_PASS="$REDIS_PASSWORD"
+SENTINEL_PASS="$SENTINEL_PASSWORD"
 
 SLAVE_HOSTS=("172.28.0.11" "172.28.0.12" "172.28.0.13")
 SLAVE_PORTS=("6379" "6379" "6379")
@@ -23,6 +25,12 @@ SENTINEL_PORTS=("26379" "26379" "26379")
 MASTER_NAME="mymaster"
 LOG_FILE="/tmp/redis_health_check.log"
 METRICS_FILE="/tmp/redis_metrics.json"
+
+sentinel_cli() {
+    local container="$1"
+    shift
+    docker exec -e REDISCLI_AUTH="$SENTINEL_PASS" "$container" redis-cli "$@"
+}
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
@@ -67,10 +75,10 @@ get_current_master() {
         local sentinel_num=$((i + 1))
 
         local sentinel_reply
-        sentinel_reply=$(docker exec "sentinel_$sentinel_num" redis-cli -h "$sentinel_host" -p "$sentinel_port" ping 2>/dev/null || true)
+        sentinel_reply=$(sentinel_cli "sentinel_$sentinel_num" -h "$sentinel_host" -p "$sentinel_port" ping 2>/dev/null || true)
         if [ "$sentinel_reply" = "PONG" ]; then
             local master_addr
-            master_addr=$(docker exec "sentinel_$sentinel_num" redis-cli -p "$sentinel_port" sentinel get-master-addr-by-name "$MASTER_NAME" 2>/dev/null)
+            master_addr=$(sentinel_cli "sentinel_$sentinel_num" -p "$sentinel_port" sentinel get-master-addr-by-name "$MASTER_NAME" 2>/dev/null)
             if [ -n "$master_addr" ]; then
                 # master_addr is "host\nport"
                 local current_master_host=$(echo "$master_addr" | head -n1)
@@ -147,12 +155,12 @@ check_sentinel_status() {
         local sentinel_num=$((i + 1))
 
         local sentinel_reply
-        sentinel_reply=$(docker exec "sentinel_$sentinel_num" redis-cli -h "$sentinel_host" -p "$sentinel_port" ping 2>/dev/null || true)
+        sentinel_reply=$(sentinel_cli "sentinel_$sentinel_num" -h "$sentinel_host" -p "$sentinel_port" ping 2>/dev/null || true)
         if [ "$sentinel_reply" = "PONG" ]; then
             print_status "OK" "Sentinel_$sentinel_num is responding"
 
             local master_info
-            master_info=$(docker exec "sentinel_$sentinel_num" redis-cli -p 26379 sentinel get-master-addr-by-name "$MASTER_NAME" 2>/dev/null || echo "ERROR")
+            master_info=$(sentinel_cli "sentinel_$sentinel_num" -p 26379 sentinel get-master-addr-by-name "$MASTER_NAME" 2>/dev/null || echo "ERROR")
 
             if echo "$master_info" | grep -q "$MASTER_HOST"; then
                 print_status "OK" "Sentinel_$sentinel_num correctly identifies master"

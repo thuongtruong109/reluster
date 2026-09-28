@@ -35,6 +35,7 @@ apiRouter.get("/health", (_request, response) => {
     ok: true,
     service: "reluster-console",
     redisConfigured: Boolean(config.redisPassword),
+    sentinelConfigured: Boolean(config.sentinelPassword),
     writeEnabled: config.writeEnabled,
     timestamp: new Date().toISOString(),
   });

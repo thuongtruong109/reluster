@@ -21,6 +21,7 @@ function readBoolean(value, fallback = false) {
 export const config = Object.freeze({
   port: Number.parseInt(process.env.CONSOLE_PORT ?? "8080", 10),
   redisPassword: process.env.REDIS_PASSWORD ?? "",
+  sentinelPassword: process.env.SENTINEL_PASSWORD ?? "",
   clusterNodes: parseNodes(
     process.env.CONSOLE_CLUSTER_NODES,
     "node-1:6379,node-2:6379,node-3:6379,node-4:6379,node-5:6379,node-6:6379",
@@ -44,6 +45,7 @@ export function publicConfig() {
     writeEnabled: config.writeEnabled,
     failoverEnabled: config.failoverEnabled,
     redisConfigured: Boolean(config.redisPassword),
+    sentinelConfigured: Boolean(config.sentinelPassword),
     refreshIntervalMs: config.refreshIntervalMs,
     tools: {
       commander: process.env.CONSOLE_COMMANDER_URL ?? "http://localhost:8081",

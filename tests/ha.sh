@@ -2,6 +2,7 @@
 set -e
 
 : "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+: "${SENTINEL_PASSWORD:?SENTINEL_PASSWORD must be set}"
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
@@ -11,6 +12,12 @@ redis_cli() {
   docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$CONTAINER" redis-cli "$@"
 }
 
+sentinel_cli() {
+  CONTAINER=$1
+  shift
+  docker exec -e REDISCLI_AUTH="$SENTINEL_PASSWORD" "$CONTAINER" redis-cli -p 26379 "$@"
+}
+
 wait_for_ready() {
   CONTAINER=$1
   PORT=$2
@@ -18,7 +25,7 @@ wait_for_ready() {
   for _ in $(seq 1 60); do
     if docker ps --filter "name=$CONTAINER" --filter "status=running" --format '{{.Names}}' | grep -q "$CONTAINER"; then
       case "$CONTAINER" in
-        sentinel_*) PONG=$(docker exec "$CONTAINER" redis-cli -p "$PORT" ping 2>/dev/null || true) ;;
+        sentinel_*) PONG=$(sentinel_cli "$CONTAINER" ping 2>/dev/null || true) ;;
         *) PONG=$(redis_cli "$CONTAINER" -p "$PORT" ping 2>/dev/null || true) ;;
       esac
       if [ "$PONG" = "PONG" ]; then
@@ -101,7 +108,7 @@ log "Simulating master failure..."
 docker stop redis-master
 
 log "Triggering manual failover..."
-docker exec sentinel_1 redis-cli -p 26379 sentinel failover mymaster || true
+sentinel_cli sentinel_1 sentinel failover mymaster || true
 
 # --- Detect new master ---
 NEW_MASTER=""
@@ -119,13 +126,13 @@ done
 
 if [ -z "$NEW_MASTER" ]; then
   log "❌ Failover failed: no new master detected"
-  docker exec sentinel_1 redis-cli -p 26379 sentinel master mymaster || true
-  docker exec sentinel_1 redis-cli -p 26379 sentinel slaves mymaster || true
+  sentinel_cli sentinel_1 sentinel master mymaster || true
+  sentinel_cli sentinel_1 sentinel slaves mymaster || true
   exit 1
 fi
 log "✅ New master is $NEW_MASTER"
 
-SENTINEL_MASTER_ADDRESS=$(docker exec sentinel_1 redis-cli -p 26379 --raw SENTINEL get-master-addr-by-name mymaster)
+SENTINEL_MASTER_ADDRESS=$(sentinel_cli sentinel_1 --raw SENTINEL get-master-addr-by-name mymaster)
 NEW_MASTER_HOST=$(printf '%s\n' "$SENTINEL_MASTER_ADDRESS" | sed -n '1p' | tr -d '\r')
 NEW_MASTER_PORT=$(printf '%s\n' "$SENTINEL_MASTER_ADDRESS" | sed -n '2p' | tr -d '\r')
 if [ -z "$NEW_MASTER_HOST" ] || [ -z "$NEW_MASTER_PORT" ]; then

@@ -17,3 +17,13 @@ export function requireRedisPassword(password) {
     );
   }
 }
+
+export function requireSentinelPassword(password) {
+  if (!password) {
+    throw new AppError(
+      503,
+      "SENTINEL_NOT_CONFIGURED",
+      "SENTINEL_PASSWORD chưa được cấu hình cho Reluster Console.",
+    );
+  }
+}

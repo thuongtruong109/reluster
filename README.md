@@ -156,21 +156,32 @@ flowchart LR
 ## 🔐 Environment configuration
 
 Reluster does not ship with runtime passwords. Create a local `.env` file before
-running any Redis, Sentinel, Commander, or monitoring target:
+running the stack or its management tools:
 
 ```bash
 cp .env.example .env
 ```
 
-Set `REDIS_PASSWORD` to a strong random value. Set `GRAFANA_ADMIN_PASSWORD` as
-well when using `make monitor`. For example, `openssl rand -hex 32` generates a
-value that is safe to place in the Redis configuration templates. The `.env`
-file is ignored by Git and loaded by both Docker Compose and the Makefile. Keep
-`REDIS_MASTER_HOST` aligned with the master's static address in the HA network;
-the provided value works with the default Compose subnet.
+Set both `REDIS_PASSWORD` and `SENTINEL_PASSWORD` to strong, different random
+values. `REDIS_PASSWORD` protects the Redis data nodes and replication traffic;
+`SENTINEL_PASSWORD` protects Sentinel commands such as `SENTINEL FAILOVER` and
+`SENTINEL SET`. Set `GRAFANA_ADMIN_PASSWORD` as well when using `make monitor`.
+For example, `openssl rand -hex 32` generates a value that is safe to place in
+the configuration templates. The `.env` file is ignored by Git and loaded by
+both Docker Compose and the Makefile. Keep `REDIS_MASTER_HOST` aligned with the
+master's static address in the HA network; the provided value works with the
+default Compose subnet.
 
-CI uses the `REDIS_PASSWORD` repository secret when available and creates an
-isolated per-run fallback credential for untrusted pull requests.
+The HA Compose file publishes Sentinel only on the host loopback addresses
+`127.0.0.1:26379-26381`; containers continue to communicate over the private
+`redisnet` network. Password authentication and loopback binding are suitable
+defaults for the local lab. A production deployment should additionally use a
+dedicated management network, firewall policy, Redis ACL users with least
+privilege, and TLS for traffic that crosses a trusted boundary.
+
+CI uses the `REDIS_PASSWORD` and `SENTINEL_PASSWORD` repository secrets when
+available and creates isolated per-run fallback credentials for untrusted pull
+requests.
 
 ## 🤝 Contributing
 

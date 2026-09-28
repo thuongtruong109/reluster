@@ -5,6 +5,13 @@ MASTER_NAME="redis-master"
 SENTINEL_NAME="sentinel_1"
 
 : "${MASTER_PASS:=${REDIS_PASSWORD:?REDIS_PASSWORD must be set}}"
+: "${SENTINEL_PASSWORD:?SENTINEL_PASSWORD must be set}"
+
+function sentinel_cli() {
+  local container="$1"
+  shift
+  docker exec -e REDISCLI_AUTH="$SENTINEL_PASSWORD" "$container" redis-cli -p 26379 "$@"
+}
 
 function wait_for_replication() {
   echo "⏳ Waiting for Redis replication to be ready..."
@@ -16,7 +23,7 @@ function wait_for_replication() {
   done
 
   for i in 1 2 3; do
-    docker exec sentinel_$i redis-cli -p 26379 PING
+    sentinel_cli "sentinel_$i" PING
   done
   echo "✅ Replication is ready"
 }
@@ -43,7 +50,7 @@ function benchmark_failover() {
   echo "⏳ Waiting for failover..."
   sleep 15
 
-  NEW_MASTER_IP=$(docker exec "$SENTINEL_NAME" redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster | sed -n '1p')
+  NEW_MASTER_IP=$(sentinel_cli "$SENTINEL_NAME" SENTINEL get-master-addr-by-name mymaster | sed -n '1p')
   echo "✅ New master elected: $NEW_MASTER_IP"
 
   echo "🚀 Benchmark new master..."

@@ -6,6 +6,7 @@
 discover_sentinel_master() {
     sentinel_hosts=$1
     master_name=$2
+    sentinel_password=$3
     previous_ifs=$IFS
     IFS=','
 
@@ -17,7 +18,7 @@ discover_sentinel_master() {
             sentinel_port=26379
         fi
 
-        master_address=$(redis-cli \
+        master_address=$(REDISCLI_AUTH="$sentinel_password" redis-cli \
             -h "$sentinel_host" \
             -p "$sentinel_port" \
             --raw \

@@ -3,6 +3,7 @@ include .env
 endif
 
 export REDIS_PASSWORD
+export SENTINEL_PASSWORD
 export GRAFANA_ADMIN_PASSWORD
 .PHONY: format validate console console-logs commander commander-ha commander-clt ha ha-recreate ha-cli ha-ready ha-scan ha-master ha-slave ha-test-failover ha-test ha-bench ha-backup ha-health clt clt-cli clt-init clt-ready clt-monitor clt-scan clt-test clt-bench clt-rollback clt-scale clt-health clean ci
 
@@ -51,7 +52,7 @@ ha-scan:
 	bash scripts/ha.sh scan
 
 ha-master:
-	docker exec -it sentinel_1 redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
+	docker exec -it -e REDISCLI_AUTH="$${SENTINEL_PASSWORD}" sentinel_1 redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
 
 ha-slave:
 	docker exec -it -e REDISCLI_AUTH="$${REDIS_PASSWORD}" slave_1 redis-cli info replication

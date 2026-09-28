@@ -42,6 +42,10 @@ Open <http://localhost:8080>. Set `CONSOLE_FAILOVER_ENABLED=true` in `.env` only
 when the failover demo is required. Writes are restricted to the configured
 `CONSOLE_KEY_PREFIX`, which defaults to `demo:`.
 
+Sentinel mode also requires `SENTINEL_PASSWORD`. The Console uses that separate
+credential for Sentinel discovery and administrative commands; it never sends
+`REDIS_PASSWORD` to the Sentinel command port.
+
 Older HA containers may still use Compose's `reluster_redisnet` network. Either
 recreate them with `make ha` or temporarily set `REDIS_NETWORK=reluster_redisnet`
 before starting the Console.

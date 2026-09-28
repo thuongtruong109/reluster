@@ -42,10 +42,15 @@ export function renderMeta(meta, mode) {
   select("#write-mode-tag").classList.toggle("is-healthy", meta.writeEnabled);
   select("#new-key-button").disabled = !meta.writeEnabled;
   select("#seed-button").disabled = !meta.writeEnabled;
-  select("#failover-button").disabled = mode !== "sentinel" || !meta.writeEnabled || !meta.failoverEnabled;
-  select("#failover-button").title = !meta.failoverEnabled
-    ? "Bật CONSOLE_FAILOVER_ENABLED=true để cho phép thao tác này"
-    : "";
+  select("#failover-button").disabled = mode !== "sentinel"
+    || !meta.writeEnabled
+    || !meta.failoverEnabled
+    || !meta.sentinelConfigured;
+  select("#failover-button").title = !meta.sentinelConfigured
+    ? "Thiết lập SENTINEL_PASSWORD để kết nối an toàn tới Sentinel"
+    : !meta.failoverEnabled
+      ? "Bật CONSOLE_FAILOVER_ENABLED=true để cho phép thao tác này"
+      : "";
   select("#tool-links").innerHTML = Object.entries(meta.tools)
     .map(([name, url]) => `<a class="tool-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(name)}</a>`)
     .join("");
@@ -107,9 +112,12 @@ export function renderUnavailable(error, mode) {
   for (const id of ["#metric-nodes", "#metric-coverage", "#metric-memory", "#metric-clients", "#metric-ops"]) select(id).textContent = "—";
   select("#node-grid").innerHTML = `<div class="empty-state"><span class="empty-symbol" aria-hidden="true">×</span><h3>Chưa kết nối được ${escapeHtml(mode)}</h3><p>${escapeHtml(error.message)}</p></div>`;
   select("#refresh-button").disabled = false;
-  showNotice("Redis chưa sẵn sàng", error.code === "REDIS_NOT_CONFIGURED"
+  const configurationMessage = error.code === "REDIS_NOT_CONFIGURED"
     ? "Thiết lập REDIS_PASSWORD rồi chạy Console qua Docker Compose."
-    : "Hãy kiểm tra các container và mạng redisnet, sau đó bấm Làm mới.");
+    : error.code === "SENTINEL_NOT_CONFIGURED"
+      ? "Thiết lập SENTINEL_PASSWORD để Console xác thực với Sentinel."
+      : "Hãy kiểm tra các container và mạng redisnet, sau đó bấm Làm mới.";
+  showNotice("Redis chưa sẵn sàng", configurationMessage);
 }
 
 function renderNodes(nodes) {

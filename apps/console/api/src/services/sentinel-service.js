@@ -1,5 +1,5 @@
 import { config } from "../config.js";
-import { AppError } from "../lib/app-error.js";
+import { AppError, requireSentinelPassword } from "../lib/app-error.js";
 import { parseSentinelPairs } from "../lib/parsers.js";
 import { withRedisNode } from "../lib/redis.js";
 import { enrichNodes, summarizeNodes } from "./node-stats.js";
@@ -20,7 +20,7 @@ async function querySentinel(node) {
           masterAddress: Array.isArray(masterAddress) ? masterAddress.join(":") : null,
         };
       },
-      { password: undefined },
+      { password: config.sentinelPassword },
     );
   } catch (error) {
     return { ...node, label: node.host, healthy: false, error: error.message };
@@ -28,6 +28,7 @@ async function querySentinel(node) {
 }
 
 export async function getSentinelStatus() {
+  requireSentinelPassword(config.sentinelPassword);
   const sentinels = await Promise.all(config.sentinelNodes.map(querySentinel));
   const activeSentinel = sentinels.find((sentinel) => sentinel.healthy);
   if (!activeSentinel) {
@@ -86,11 +87,12 @@ export async function getSentinelStatus() {
         sentinels,
       };
     },
-    { password: undefined },
+    { password: config.sentinelPassword },
   );
 }
 
 export async function requestFailover() {
+  requireSentinelPassword(config.sentinelPassword);
   const sentinels = await Promise.all(config.sentinelNodes.map(querySentinel));
   const activeSentinel = sentinels.find((sentinel) => sentinel.healthy);
   if (!activeSentinel) throw new AppError(503, "SENTINEL_UNAVAILABLE", "Không có Sentinel hoạt động.");
@@ -98,6 +100,6 @@ export async function requestFailover() {
   return withRedisNode(
     activeSentinel,
     (client) => client.call("SENTINEL", "FAILOVER", config.sentinelMasterName),
-    { password: undefined },
+    { password: config.sentinelPassword },
   );
 }

@@ -1,6 +1,6 @@
 import Redis from "ioredis";
 import { config } from "../config.js";
-import { AppError, requireRedisPassword } from "./app-error.js";
+import { AppError, requireRedisPassword, requireSentinelPassword } from "./app-error.js";
 
 function baseOptions() {
   requireRedisPassword(config.redisPassword);
@@ -61,10 +61,12 @@ export async function withModeClient(mode, callback) {
       }),
     );
   } else if (mode === "sentinel") {
+    requireSentinelPassword(config.sentinelPassword);
     client = muteExpectedConnectionErrors(
       new Redis({
         ...baseOptions(),
         sentinels: config.sentinelNodes,
+        sentinelPassword: config.sentinelPassword,
         name: config.sentinelMasterName,
         role: "master",
       }),

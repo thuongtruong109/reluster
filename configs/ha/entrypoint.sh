@@ -2,6 +2,7 @@
 set -eu
 
 : "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+: "${SENTINEL_PASSWORD:?SENTINEL_PASSWORD must be set}"
 : "${REDIS_MASTER_HOST:?REDIS_MASTER_HOST must be set}"
 : "${REDIS_CONFIG_TEMPLATE:?REDIS_CONFIG_TEMPLATE must be set}"
 : "${REDIS_CONFIG_FILE:?REDIS_CONFIG_FILE must be set}"
@@ -10,7 +11,7 @@ mkdir -p "$(dirname "$REDIS_CONFIG_FILE")"
 umask 077
 
 # Limit substitution to values expected by the Redis configuration templates.
-envsubst '${REDIS_PASSWORD} ${REDIS_MASTER_HOST}' < "$REDIS_CONFIG_TEMPLATE" > "$REDIS_CONFIG_FILE"
+envsubst '${REDIS_PASSWORD} ${SENTINEL_PASSWORD} ${REDIS_MASTER_HOST}' < "$REDIS_CONFIG_TEMPLATE" > "$REDIS_CONFIG_FILE"
 
 if [ -n "${REDIS_BOOTSTRAP_ROLE:-}" ]; then
     : "${REDIS_NODE_HOST:?REDIS_NODE_HOST must be set for a Redis data node}"
@@ -36,7 +37,8 @@ if [ -n "${REDIS_BOOTSTRAP_ROLE:-}" ]; then
     while [ -z "$sentinel_master" ]; do
         sentinel_master=$(discover_sentinel_master \
             "$REDIS_SENTINEL_HOSTS" \
-            "$REDIS_SENTINEL_MASTER_NAME" || true)
+            "$REDIS_SENTINEL_MASTER_NAME" \
+            "$SENTINEL_PASSWORD" || true)
 
         if [ -n "$sentinel_master" ] || [ "$(date +%s)" -ge "$discovery_deadline" ]; then
             break
