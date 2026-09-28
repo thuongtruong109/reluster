@@ -193,6 +193,35 @@ When upgrading an existing checkout, remove the old
 `REDIS_MASTER_SERVICE=redis-master`, then run `make ha-recreate`. Recreating the
 services keeps the named Redis data volumes; only `make clean` removes them.
 
+## 🛡️ Write durability policy
+
+HA and Cluster nodes default to:
+
+```env
+REDIS_MIN_REPLICAS_TO_WRITE=1
+REDIS_MIN_REPLICAS_MAX_LAG=10
+```
+
+A master accepts writes only while at least one replica is connected and has
+communicated with it within the configured 10-second lag window. Otherwise Redis returns
+`NOREPLICAS`; this bounds the likely data-loss window but does not make Redis
+replication synchronous or eliminate every failover loss scenario. Set
+`REDIS_MIN_REPLICAS_TO_WRITE=0` only when write availability is more important
+than this safety guard.
+
+The Sentinel layout has three replicas, so a promoted master can normally retain
+another healthy replica. The six-node Cluster layout has one replica per master;
+after promotion, writes for that shard remain blocked until another replica is
+attached or the failed node rejoins. Production deployments that require both
+continued writes and this guard should provision at least two replicas per
+master.
+
+Reluster Console maps `NOREPLICAS`, `MASTERDOWN`, `READONLY`, and `CLUSTERDOWN`
+to retryable `503` responses. It does not automatically replay mutations after
+a failover because a disconnected client may not know whether a prior write was
+applied. For critical application writes, consider `WAIT` or `WAITAOF` on the
+same Redis connection and verify the returned acknowledgement count.
+
 CI uses the `REDIS_PASSWORD` and `SENTINEL_PASSWORD` repository secrets when
 available and creates isolated per-run fallback credentials for untrusted pull
 requests.

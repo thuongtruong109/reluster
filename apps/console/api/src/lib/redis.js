@@ -1,6 +1,7 @@
 import Redis from "ioredis";
 import { config } from "../config.js";
 import { AppError, requireRedisPassword, requireSentinelPassword } from "./app-error.js";
+import { mapRedisError } from "./redis-error.js";
 
 function baseOptions() {
   requireRedisPassword(config.redisPassword);
@@ -79,8 +80,7 @@ export async function withModeClient(mode, callback) {
     await client.connect();
     return await callback(client);
   } catch (error) {
-    if (error instanceof AppError) throw error;
-    throw new AppError(503, "REDIS_UNAVAILABLE", `Không thể kết nối Redis ${mode}.`, error.message);
+    throw mapRedisError(error, mode);
   } finally {
     client.disconnect(false);
   }

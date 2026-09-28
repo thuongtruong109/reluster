@@ -3,6 +3,11 @@ networks:
     name: redisnet
     driver: bridge
 
+x-redis-environment: &redis-environment
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+  REDIS_MIN_REPLICAS_TO_WRITE: ${REDIS_MIN_REPLICAS_TO_WRITE:-1}
+  REDIS_MIN_REPLICAS_MAX_LAG: ${REDIS_MIN_REPLICAS_MAX_LAG:-10}
+
 x-redis-base: &redis-base
   image: thuongtruong1009/reluster:latest
   build:
@@ -10,8 +15,7 @@ x-redis-base: &redis-base
     dockerfile: ./configs/cluster/Dockerfile
   networks:
     - redisnet
-  environment:
-    REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+  environment: *redis-environment
   healthcheck:
     test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping"]
     interval: 10s
@@ -25,7 +29,7 @@ services:
     container_name: node-1
     hostname: node-1
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      <<: *redis-environment
       REDIS_HOST: node-1
 
   node-2:
@@ -33,7 +37,7 @@ services:
     container_name: node-2
     hostname: node-2
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      <<: *redis-environment
       REDIS_HOST: node-2
 
   node-3:
@@ -41,7 +45,7 @@ services:
     container_name: node-3
     hostname: node-3
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      <<: *redis-environment
       REDIS_HOST: node-3
 
   node-4:
@@ -49,7 +53,7 @@ services:
     container_name: node-4
     hostname: node-4
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      <<: *redis-environment
       REDIS_HOST: node-4
 
   node-5:
@@ -57,7 +61,7 @@ services:
     container_name: node-5
     hostname: node-5
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      <<: *redis-environment
       REDIS_HOST: node-5
 
   node-6:
@@ -65,7 +69,7 @@ services:
     container_name: node-6
     hostname: node-6
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      <<: *redis-environment
       REDIS_HOST: node-6
 
   node-7:
@@ -73,7 +77,7 @@ services:
     container_name: node-7
     hostname: node-7
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      <<: *redis-environment
       REDIS_HOST: node-7
 
   benchmark:

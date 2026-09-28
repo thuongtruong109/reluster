@@ -4,6 +4,8 @@ endif
 
 export REDIS_PASSWORD
 export SENTINEL_PASSWORD
+export REDIS_MIN_REPLICAS_TO_WRITE
+export REDIS_MIN_REPLICAS_MAX_LAG
 export GRAFANA_ADMIN_PASSWORD
 .PHONY: format validate console console-logs commander commander-ha commander-clt ha ha-recreate ha-cli ha-ready ha-scan ha-master ha-slave ha-test-failover ha-test ha-bench ha-backup ha-health clt clt-cli clt-init clt-ready clt-monitor clt-scan clt-test clt-bench clt-rollback clt-scale clt-health clean ci
 

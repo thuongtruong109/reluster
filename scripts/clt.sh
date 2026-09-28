@@ -48,6 +48,11 @@ function validate_config() {
     echo "❌ Missing configuration file: $config"
     exit 1
   fi
+  if ! grep -q '^min-replicas-to-write ' "$config" \
+    || ! grep -q '^min-replicas-max-lag ' "$config"; then
+    echo "❌ Cluster write durability policy is missing"
+    exit 1
+  fi
   echo "✅ All configuration files present"
 }
 

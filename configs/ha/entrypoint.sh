@@ -10,8 +10,13 @@ set -eu
 mkdir -p "$(dirname "$REDIS_CONFIG_FILE")"
 umask 077
 
+if [ -n "${REDIS_BOOTSTRAP_ROLE:-}" ]; then
+    . /usr/local/lib/reluster/write-durability.sh
+    configure_write_durability
+fi
+
 # Limit substitution to values expected by the Redis configuration templates.
-envsubst '${REDIS_PASSWORD} ${SENTINEL_PASSWORD} ${REDIS_MASTER_HOST} ${REDIS_NODE_HOST} ${SENTINEL_ANNOUNCE_HOST}' < "$REDIS_CONFIG_TEMPLATE" > "$REDIS_CONFIG_FILE"
+envsubst '${REDIS_PASSWORD} ${SENTINEL_PASSWORD} ${REDIS_MASTER_HOST} ${REDIS_NODE_HOST} ${SENTINEL_ANNOUNCE_HOST} ${REDIS_MIN_REPLICAS_TO_WRITE} ${REDIS_MIN_REPLICAS_MAX_LAG}' < "$REDIS_CONFIG_TEMPLATE" > "$REDIS_CONFIG_FILE"
 
 if [ -n "${REDIS_BOOTSTRAP_ROLE:-}" ]; then
     : "${REDIS_NODE_HOST:?REDIS_NODE_HOST must be set for a Redis data node}"

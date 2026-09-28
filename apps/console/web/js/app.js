@@ -16,6 +16,15 @@ const state = {
 
 const element = (selector) => document.querySelector(selector);
 
+function showMutationError(error) {
+  const guidance = error.code === "WRITE_DURABILITY_UNAVAILABLE"
+    ? "Lệnh chưa được ghi. Hãy đợi replica hồi phục rồi thử lại."
+    : error.details?.retryable
+      ? "Console không tự gửi lại lệnh ghi; hãy kiểm tra key trước khi retry sau failover."
+      : "";
+  showToast([error.message, guidance].filter(Boolean).join(" "), true);
+}
+
 async function loadStatus() {
   renderLoading(state.mode);
   try {
@@ -117,7 +126,7 @@ document.querySelectorAll("[data-mode]").forEach((button) => {
 element("#refresh-button").addEventListener("click", () => void refreshAll());
 element("#auto-refresh").addEventListener("change", restartTimer);
 element("#seed-button").addEventListener("click", () => {
-  void seed().catch((error) => showToast(error.message, true));
+  void seed().catch(showMutationError);
 });
 element("#new-key-button").addEventListener("click", () => element("#key-dialog").showModal());
 element("#failover-button").addEventListener("click", () => element("#failover-dialog").showModal());
@@ -144,7 +153,7 @@ element("#key-detail").addEventListener("click", (event) => {
     state.selectedKey = null;
     state.detail = null;
     await Promise.all([loadKeys(), loadStatus(), loadAudit()]);
-  }).catch((error) => showToast(error.message, true));
+  }).catch(showMutationError);
 });
 
 element("#key-form").addEventListener("submit", (event) => {
@@ -157,7 +166,7 @@ element("#key-form").addEventListener("submit", (event) => {
     showToast(`Đã lưu ${key}.`);
     await Promise.all([loadKeys(), loadStatus(), loadAudit()]);
     await selectKey(key);
-  }).catch((error) => showToast(error.message, true));
+  }).catch(showMutationError);
 });
 
 element("#failover-form").addEventListener("submit", (event) => {

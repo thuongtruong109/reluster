@@ -6,10 +6,12 @@ RUN apt-get update \
 
 COPY ./configs/ha/entrypoint.sh /usr/local/bin/reluster-entrypoint.sh
 COPY ./configs/ha/role-discovery.sh /usr/local/lib/reluster/role-discovery.sh
+COPY ./configs/common/write-durability.sh /usr/local/lib/reluster/write-durability.sh
 COPY ./configs/ha/replica/redis.conf /etc/redis/redis.conf.template
 
 RUN chmod +x /usr/local/bin/reluster-entrypoint.sh \
-    && chmod 0644 /usr/local/lib/reluster/role-discovery.sh
+    && chmod 0644 /usr/local/lib/reluster/role-discovery.sh \
+    && chmod 0644 /usr/local/lib/reluster/write-durability.sh
 
 ENV REDIS_CONFIG_TEMPLATE=/etc/redis/redis.conf.template \
     REDIS_CONFIG_FILE=/data/redis.conf

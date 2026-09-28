@@ -6,7 +6,9 @@ RUN apt-get update \
 
 COPY configs/cluster/node.conf /etc/redis/node.conf
 COPY configs/cluster/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY configs/common/write-durability.sh /usr/local/lib/reluster/write-durability.sh
 
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh \
+    && chmod 0644 /usr/local/lib/reluster/write-durability.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

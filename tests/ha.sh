@@ -5,9 +5,12 @@ HA_PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export HA_PROJECT_DIR
 # shellcheck source=scripts/lib/ha-compose.sh
 . "$HA_PROJECT_DIR/scripts/lib/ha-compose.sh"
+# shellcheck source=configs/common/write-durability.sh
+. "$HA_PROJECT_DIR/configs/common/write-durability.sh"
 
 : "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
 : "${SENTINEL_PASSWORD:?SENTINEL_PASSWORD must be set}"
+configure_write_durability
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
@@ -44,8 +47,9 @@ wait_for_ready() {
         ROLE=$(redis_cli "$CONTAINER" -p "$PORT" info replication | grep "^role:" | cut -d: -f2 | tr -d '[:space:]' || true)
         if [ "$ROLE" = "slave" ]; then
           MASTER_HOST=$(redis_cli "$CONTAINER" -p "$PORT" info replication | grep "^master_host:" | cut -d: -f2 | tr -d '[:space:]' || true)
-          if [ -n "$MASTER_HOST" ] && [ "$MASTER_HOST" != "?" ]; then
-            log "✅ $CONTAINER is ready (role=slave, master=$MASTER_HOST)"
+          LINK_STATUS=$(redis_cli "$CONTAINER" -p "$PORT" info replication | grep "^master_link_status:" | cut -d: -f2 | tr -d '[:space:]' || true)
+          if [ -n "$MASTER_HOST" ] && [ "$MASTER_HOST" != "?" ] && [ "$LINK_STATUS" = "up" ]; then
+            log "✅ $CONTAINER is ready (role=slave, master=$MASTER_HOST, link=up)"
             return 0
           fi
         else
@@ -88,6 +92,14 @@ if [ $success -ne 1 ]; then
   exit 1
 fi
 log "✅ Detected current master: $NEW_MASTER"
+
+MIN_REPLICAS=$(redis_cli "$NEW_MASTER" --raw CONFIG GET min-replicas-to-write | sed -n '2p' | tr -d '\r')
+MAX_REPLICA_LAG=$(redis_cli "$NEW_MASTER" --raw CONFIG GET min-replicas-max-lag | sed -n '2p' | tr -d '\r')
+if [ "$MIN_REPLICAS" != "$REDIS_MIN_REPLICAS_TO_WRITE" ] || [ "$MAX_REPLICA_LAG" != "$REDIS_MIN_REPLICAS_MAX_LAG" ]; then
+  log "❌ Write durability configuration mismatch (replicas=$MIN_REPLICAS, lag=$MAX_REPLICA_LAG)"
+  exit 1
+fi
+log "✅ Write durability requires $MIN_REPLICAS replica(s) within ${MAX_REPLICA_LAG}s lag"
 
 # --- Check replication ---
 log "Testing replication to slaves..."
