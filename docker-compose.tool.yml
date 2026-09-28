@@ -4,7 +4,6 @@ services:
       context: ./apps/console
       dockerfile: api/Dockerfile
     image: reluster-console:local
-    container_name: reluster-console
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
@@ -22,7 +21,6 @@ services:
 
   commander:
     image: rediscommander/redis-commander:latest
-    container_name: commander
     restart: unless-stopped
     environment:
       REDIS_HOSTS: ${COMMANDER_REDIS_HOSTS:-}
@@ -33,7 +31,6 @@ services:
 
   exporter:
     image: oliver006/redis_exporter:v1.50.0
-    container_name: exporter
     networks:
       - redisnet
     environment:
@@ -49,7 +46,6 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.47.0
-    container_name: prometheus
     networks:
       - redisnet
     volumes:
@@ -61,7 +57,6 @@ services:
 
   grafana:
     image: grafana/grafana:10.2.3
-    container_name: grafana
     networks:
       - redisnet
     environment:

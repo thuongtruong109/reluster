@@ -1,6 +1,11 @@
 #!/bin/sh
 set -e
 
+HA_PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export HA_PROJECT_DIR
+# shellcheck source=scripts/lib/ha-compose.sh
+. "$HA_PROJECT_DIR/scripts/lib/ha-compose.sh"
+
 : "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
 : "${SENTINEL_PASSWORD:?SENTINEL_PASSWORD must be set}"
 
@@ -9,13 +14,13 @@ log() { echo "[$(date +'%H:%M:%S')] $*"; }
 redis_cli() {
   CONTAINER=$1
   shift
-  docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$CONTAINER" redis-cli "$@"
+  ha_exec "$CONTAINER" env REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli "$@"
 }
 
 sentinel_cli() {
   CONTAINER=$1
   shift
-  docker exec -e REDISCLI_AUTH="$SENTINEL_PASSWORD" "$CONTAINER" redis-cli -p 26379 "$@"
+  ha_exec "$CONTAINER" env REDISCLI_AUTH="$SENTINEL_PASSWORD" redis-cli -p 26379 "$@"
 }
 
 wait_for_ready() {
@@ -23,7 +28,7 @@ wait_for_ready() {
   PORT=$2
   log "⏳ Waiting for $CONTAINER to be ready on port $PORT..."
   for _ in $(seq 1 60); do
-    if docker ps --filter "name=$CONTAINER" --filter "status=running" --format '{{.Names}}' | grep -q "$CONTAINER"; then
+    if ha_service_running "$CONTAINER"; then
       case "$CONTAINER" in
         sentinel_*) PONG=$(sentinel_cli "$CONTAINER" ping 2>/dev/null || true) ;;
         *) PONG=$(redis_cli "$CONTAINER" -p "$PORT" ping 2>/dev/null || true) ;;
@@ -52,7 +57,7 @@ wait_for_ready() {
     sleep 2
   done
   log "❌ $CONTAINER did not become ready"
-  docker logs "$CONTAINER" || true
+  ha_compose logs "$CONTAINER" || true
   exit 1
 }
 
@@ -105,7 +110,7 @@ done
 log "✅ Replication verified"
 
 log "Simulating master failure..."
-docker stop redis-master
+ha_compose stop redis-master
 
 log "Triggering manual failover..."
 sentinel_cli sentinel_1 sentinel failover mymaster || true
@@ -197,7 +202,7 @@ done
 log "✅ Replication after failover verified"
 
 log "Restarting old master..."
-docker start redis-master
+ha_compose start redis-master
 
 # --- Ensure old master rejoins the exact Sentinel-elected master as a slave ---
 joined=0

@@ -2,24 +2,29 @@
 
 set -euo pipefail
 
+HA_PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+export HA_PROJECT_DIR
+# shellcheck source=scripts/lib/ha-compose.sh
+source "$HA_PROJECT_DIR/scripts/lib/ha-compose.sh"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-MASTER_HOST="${REDIS_MASTER_HOST:-172.28.0.10}"
+MASTER_HOST="${REDIS_MASTER_SERVICE:-redis-master}"
 MASTER_PORT="6379"
 : "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
 : "${SENTINEL_PASSWORD:?SENTINEL_PASSWORD must be set}"
 MASTER_PASS="$REDIS_PASSWORD"
 SENTINEL_PASS="$SENTINEL_PASSWORD"
 
-SLAVE_HOSTS=("172.28.0.11" "172.28.0.12" "172.28.0.13")
+SLAVE_HOSTS=("slave_1" "slave_2" "slave_3")
 SLAVE_PORTS=("6379" "6379" "6379")
 SLAVE_PASS="$REDIS_PASSWORD"
 
-SENTINEL_HOSTS=("172.28.0.20" "172.28.0.21" "172.28.0.22")
+SENTINEL_HOSTS=("sentinel_1" "sentinel_2" "sentinel_3")
 SENTINEL_PORTS=("26379" "26379" "26379")
 
 MASTER_NAME="mymaster"
@@ -29,7 +34,7 @@ METRICS_FILE="/tmp/redis_metrics.json"
 sentinel_cli() {
     local container="$1"
     shift
-    docker exec -e REDISCLI_AUTH="$SENTINEL_PASS" "$container" redis-cli "$@"
+    ha_exec "$container" env REDISCLI_AUTH="$SENTINEL_PASS" redis-cli "$@"
 }
 
 log() {
@@ -58,7 +63,7 @@ check_redis_connection() {
     local name="$4"
 
     local reply
-    reply=$(docker exec -e REDISCLI_AUTH="$password" redis-master redis-cli -h "$host" -p "$port" ping 2>/dev/null || true)
+    reply=$(ha_exec redis-master env REDISCLI_AUTH="$password" redis-cli -h "$host" -p "$port" ping 2>/dev/null || true)
     if [ "$reply" = "PONG" ]; then
         print_status "OK" "$name connection successful"
         return 0
@@ -111,7 +116,7 @@ check_replication() {
     local test_value="health_check_value_$(date +%s)"
 
     local write_reply
-    write_reply=$(docker exec -e REDISCLI_AUTH="$MASTER_PASS" redis-master redis-cli -h "$current_master_host" -p "$current_master_port" set "$test_key" "$test_value" 2>/dev/null || true)
+    write_reply=$(ha_exec redis-master env REDISCLI_AUTH="$MASTER_PASS" redis-cli -h "$current_master_host" -p "$current_master_port" set "$test_key" "$test_value" 2>/dev/null || true)
     if [ "$write_reply" != "OK" ]; then
         print_status "ERROR" "Failed to write test key to current master"
         return 1
@@ -124,7 +129,7 @@ check_replication() {
         local slave_num=$((i + 1))
 
         local replicated_value
-        replicated_value=$(docker exec "slave_$slave_num" redis-cli -a "$SLAVE_PASS" get "$test_key" 2>/dev/null || echo "ERROR")
+        replicated_value=$(ha_exec "slave_$slave_num" redis-cli -a "$SLAVE_PASS" get "$test_key" 2>/dev/null || echo "ERROR")
 
         if [ "$replicated_value" = "$test_value" ]; then
             print_status "OK" "Replication working on slave_$slave_num"
@@ -134,7 +139,7 @@ check_replication() {
         fi
     done
 
-    docker exec redis-master redis-cli -h "$current_master_host" -p "$current_master_port" -a "$MASTER_PASS" del "$test_key" &>/dev/null
+    ha_exec redis-master redis-cli -h "$current_master_host" -p "$current_master_port" -a "$MASTER_PASS" del "$test_key" &>/dev/null
 
     if [ $failed_slaves -eq 0 ]; then
         print_status "OK" "All slaves are properly replicating"
@@ -162,8 +167,12 @@ check_sentinel_status() {
             local master_info
             master_info=$(sentinel_cli "sentinel_$sentinel_num" -p 26379 sentinel get-master-addr-by-name "$MASTER_NAME" 2>/dev/null || echo "ERROR")
 
-            if echo "$master_info" | grep -q "$MASTER_HOST"; then
-                print_status "OK" "Sentinel_$sentinel_num correctly identifies master"
+            local reported_master_host
+            local reported_master_port
+            reported_master_host=$(echo "$master_info" | head -n1)
+            reported_master_port=$(echo "$master_info" | tail -n1)
+            if [ -n "$reported_master_host" ] && [[ "$reported_master_port" =~ ^[0-9]+$ ]]; then
+                print_status "OK" "Sentinel_$sentinel_num identifies $reported_master_host:$reported_master_port as master"
             else
                 print_status "WARN" "Sentinel_$sentinel_num master discovery issue"
                 ((failed_sentinels++))
@@ -187,13 +196,13 @@ check_memory_usage() {
     log "Checking memory usage..."
 
     local master_memory
-    master_memory=$(docker exec redis-master redis-cli -a "$MASTER_PASS" info memory | grep "used_memory_human" | cut -d: -f2 | tr -d '\r')
+    master_memory=$(ha_exec redis-master redis-cli -a "$MASTER_PASS" info memory | grep "used_memory_human" | cut -d: -f2 | tr -d '\r')
     print_status "OK" "Master memory usage: $master_memory"
 
     for i in "${!SLAVE_HOSTS[@]}"; do
         local slave_num=$((i + 1))
         local slave_memory
-        slave_memory=$(docker exec "slave_$slave_num" redis-cli -a "$SLAVE_PASS" info memory | grep "used_memory_human" | cut -d: -f2 | tr -d '\r')
+        slave_memory=$(ha_exec "slave_$slave_num" redis-cli -a "$SLAVE_PASS" info memory | grep "used_memory_human" | cut -d: -f2 | tr -d '\r')
         print_status "OK" "Slave_$slave_num memory usage: $slave_memory"
     done
 }
@@ -204,7 +213,7 @@ check_replication_lag() {
     for i in "${!SLAVE_HOSTS[@]}"; do
         local slave_num=$((i + 1))
         local lag_info
-        lag_info=$(docker exec "slave_$slave_num" redis-cli -a "$SLAVE_PASS" info replication | grep "master_last_io_seconds_ago" | cut -d: -f2 | tr -d '\r')
+        lag_info=$(ha_exec "slave_$slave_num" redis-cli -a "$SLAVE_PASS" info replication | grep "master_last_io_seconds_ago" | cut -d: -f2 | tr -d '\r')
 
         if [ -n "$lag_info" ] && [ "$lag_info" -lt 10 ]; then
             print_status "OK" "Slave_$slave_num replication lag: ${lag_info}s"
@@ -215,16 +224,16 @@ check_replication_lag() {
 }
 
 check_container_health() {
-    log "Checking container health..."
+    log "Checking service health..."
 
-    local containers=("redis-master" "slave_1" "slave_2" "slave_3" "sentinel_1" "sentinel_2" "sentinel_3")
+    local services=("redis-master" "slave_1" "slave_2" "slave_3" "sentinel_1" "sentinel_2" "sentinel_3")
     local overall_status=0
 
-    for container in "${containers[@]}"; do
-        if docker ps --filter "name=$container" --filter "status=running" | grep -q "$container"; then
-            print_status "OK" "Container $container is running"
+    for service in "${services[@]}"; do
+        if ha_service_running "$service"; then
+            print_status "OK" "Service $service is running"
         else
-            print_status "ERROR" "Container $container is not running"
+            print_status "ERROR" "Service $service is not running"
             overall_status=1
         fi
     done
@@ -239,10 +248,10 @@ collect_metrics() {
     local metrics="{\"timestamp\": \"$timestamp\", \"services\": {"
 
     local master_connected_clients
-    master_connected_clients=$(docker exec redis-master redis-cli -a "$MASTER_PASS" info clients | grep "connected_clients" | cut -d: -f2 | tr -d '\r')
+    master_connected_clients=$(ha_exec redis-master redis-cli -a "$MASTER_PASS" info clients | grep "connected_clients" | cut -d: -f2 | tr -d '\r')
 
     local master_total_commands
-    master_total_commands=$(docker exec redis-master redis-cli -a "$MASTER_PASS" info stats | grep "total_commands_processed" | cut -d: -f2 | tr -d '\r')
+    master_total_commands=$(ha_exec redis-master redis-cli -a "$MASTER_PASS" info stats | grep "total_commands_processed" | cut -d: -f2 | tr -d '\r')
 
     metrics="$metrics\"master\": {\"connected_clients\": $master_connected_clients, \"total_commands\": $master_total_commands}"
 
@@ -250,7 +259,7 @@ collect_metrics() {
     for i in "${!SLAVE_HOSTS[@]}"; do
         local slave_num=$((i + 1))
         local slave_connected_clients
-        slave_connected_clients=$(docker exec "slave_$slave_num" redis-cli -a "$SLAVE_PASS" info clients | grep "connected_clients" | cut -d: -f2 | tr -d '\r')
+        slave_connected_clients=$(ha_exec "slave_$slave_num" redis-cli -a "$SLAVE_PASS" info clients | grep "connected_clients" | cut -d: -f2 | tr -d '\r')
 
         if [ $i -gt 0 ]; then
             metrics="$metrics, "
@@ -281,7 +290,7 @@ perform_load_test() {
     local start_time=$(date +%s)
 
     for i in {1..1000}; do
-        docker exec redis-master redis-cli -h "$current_master_host" -p "$current_master_port" -a "$MASTER_PASS" set "load_test_key_$i" "load_test_value_$i" &>/dev/null
+        ha_exec redis-master redis-cli -h "$current_master_host" -p "$current_master_port" -a "$MASTER_PASS" set "load_test_key_$i" "load_test_value_$i" &>/dev/null
     done
 
     local end_time=$(date +%s)
@@ -291,7 +300,7 @@ perform_load_test() {
     print_status "OK" "Load test completed: $ops_per_second ops/sec"
 
     # Cleanup
-    docker exec redis-master redis-cli -h "$current_master_host" -p "$current_master_port" -a "$MASTER_PASS" eval "for _,k in ipairs(redis.call('keys', 'load_test_key_*')) do redis.call('del', k) end" 0 &>/dev/null
+    ha_exec redis-master redis-cli -h "$current_master_host" -p "$current_master_port" -a "$MASTER_PASS" eval "for _,k in ipairs(redis.call('keys', 'load_test_key_*')) do redis.call('del', k) end" 0 &>/dev/null
 
     if [ $ops_per_second -gt 100 ]; then
         print_status "OK" "Performance is acceptable"

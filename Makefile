@@ -41,7 +41,7 @@ ha-recreate:
 	docker compose -f $(HA_COMPOSE_FILE) up -d --build --force-recreate
 
 ha-cli:
-	docker exec -it -e REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-master redis-cli -p 6379
+	docker compose -f $(HA_COMPOSE_FILE) exec -e REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-master redis-cli -p 6379
 
 ha-ready:
 	chmod +x scripts/ha.sh
@@ -52,10 +52,10 @@ ha-scan:
 	bash scripts/ha.sh scan
 
 ha-master:
-	docker exec -it -e REDISCLI_AUTH="$${SENTINEL_PASSWORD}" sentinel_1 redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
+	docker compose -f $(HA_COMPOSE_FILE) exec -e REDISCLI_AUTH="$${SENTINEL_PASSWORD}" sentinel_1 redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
 
 ha-slave:
-	docker exec -it -e REDISCLI_AUTH="$${REDIS_PASSWORD}" slave_1 redis-cli info replication
+	docker compose -f $(HA_COMPOSE_FILE) exec -e REDISCLI_AUTH="$${REDIS_PASSWORD}" slave_1 redis-cli info replication
 
 ha-test-failover:
 	chmod +x tests/ha-failover.sh

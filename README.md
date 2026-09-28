@@ -168,9 +168,10 @@ values. `REDIS_PASSWORD` protects the Redis data nodes and replication traffic;
 `SENTINEL SET`. Set `GRAFANA_ADMIN_PASSWORD` as well when using `make monitor`.
 For example, `openssl rand -hex 32` generates a value that is safe to place in
 the configuration templates. The `.env` file is ignored by Git and loaded by
-both Docker Compose and the Makefile. Keep `REDIS_MASTER_HOST` aligned with the
-master's static address in the HA network; the provided value works with the
-default Compose subnet.
+both Docker Compose and the Makefile. `REDIS_MASTER_SERVICE` defaults to the
+Compose service `redis-master`, which is resolved by Docker DNS and does not
+depend on a container IP. The old IP-based `REDIS_MASTER_HOST` setting is no
+longer used by Compose.
 
 The HA Compose file publishes Sentinel only on the host loopback addresses
 `127.0.0.1:26379-26381`; containers continue to communicate over the private
@@ -178,6 +179,19 @@ The HA Compose file publishes Sentinel only on the host loopback addresses
 defaults for the local lab. A production deployment should additionally use a
 dedicated management network, firewall policy, Redis ACL users with least
 privilege, and TLS for traffic that crosses a trusted boundary.
+
+HA services intentionally have no fixed `container_name`, `ipv4_address`, or
+custom subnet. Redis bootstrap uses Docker DNS service names, while Sentinel
+may return the current node IP dynamically after a failover. Operational scripts
+target Compose service identities, so container recreation and IP changes do
+not invalidate `exec`, health, backup, or failover commands. For Swarm or
+Kubernetes, replace the Compose DNS layer with the platform's Service and
+StatefulSet identities rather than assigning pod/container IPs manually.
+
+When upgrading an existing checkout, remove the old
+`REDIS_MASTER_HOST=172.28.0.10` entry from `.env` and optionally replace it with
+`REDIS_MASTER_SERVICE=redis-master`, then run `make ha-recreate`. Recreating the
+services keeps the named Redis data volumes; only `make clean` removes them.
 
 CI uses the `REDIS_PASSWORD` and `SENTINEL_PASSWORD` repository secrets when
 available and creates isolated per-run fallback credentials for untrusted pull
