@@ -4,7 +4,7 @@ endif
 
 export REDIS_PASSWORD
 export GRAFANA_ADMIN_PASSWORD
-.PHONY: format validate console console-logs commander commander-ha commander-clt ha ha-cli ha-ready ha-scan ha-master ha-slave ha-test-failover ha-test ha-bench ha-backup ha-health clt clt-cli clt-init clt-ready clt-monitor clt-scan clt-test clt-bench clt-rollback clt-scale clt-health clean ci
+.PHONY: format validate console console-logs commander commander-ha commander-clt ha ha-recreate ha-cli ha-ready ha-scan ha-master ha-slave ha-test-failover ha-test ha-bench ha-backup ha-health clt clt-cli clt-init clt-ready clt-monitor clt-scan clt-test clt-bench clt-rollback clt-scale clt-health clean ci
 
 HA_COMPOSE_FILE = docker-compose.ha.yml
 CLT_COMPOSE_FILE = docker-compose.cluster.yml
@@ -34,7 +34,10 @@ validate:
 	bash scripts/clt.sh validate
 
 ha:
-	docker compose -f $(HA_COMPOSE_FILE) up -d --force-recreate
+	docker compose -f $(HA_COMPOSE_FILE) up -d --build
+
+ha-recreate:
+	docker compose -f $(HA_COMPOSE_FILE) up -d --build --force-recreate
 
 ha-cli:
 	docker exec -it -e REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-master redis-cli -p 6379

@@ -89,6 +89,18 @@ the promoted replica instead of starting a second independent master. An
 already-initialized node also refuses to start standalone when all Sentinels are
 unreachable, preventing an unsafe split-brain fallback.
 
+Each data node owns a separate named volume mounted at `/data`:
+
+- `redis_master_data`
+- `redis_slave_1_data`
+- `redis_slave_2_data`
+- `redis_slave_3_data`
+
+This keeps AOF/RDB files across container replacement and `make ha-recreate`.
+Never mount the same `/data` volume into multiple Redis processes. `make clean`
+is intentionally destructive because it runs `docker compose down -v` and
+removes these volumes; use it only when the stored Redis data should be erased.
+
 ```mermaid
 flowchart TD
    S1["🛰️ Sentinel 1"]

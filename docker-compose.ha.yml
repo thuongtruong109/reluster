@@ -12,8 +12,6 @@ x-redis-common: &redis-common
   image: thuongtruong1009/reluster-replica
   restart: always
   environment: *redis-environment
-  volumes:
-    - ./configs/ha/replica/redis.conf:/etc/redis/redis.conf.template:ro
 
 x-sentinel-common: &sentinel-common
   build:
@@ -35,6 +33,9 @@ services:
       <<: *redis-environment
       REDIS_BOOTSTRAP_ROLE: master
       REDIS_NODE_HOST: ${REDIS_MASTER_HOST:-172.28.0.10}
+    volumes:
+      - ./configs/ha/replica/redis.conf:/etc/redis/redis.conf.template:ro
+      - redis_master_data:/data
     ports:
       - "6379:6379"
     networks:
@@ -53,6 +54,9 @@ services:
       <<: *redis-environment
       REDIS_BOOTSTRAP_ROLE: replica
       REDIS_NODE_HOST: 172.28.0.11
+    volumes:
+      - ./configs/ha/replica/redis.conf:/etc/redis/redis.conf.template:ro
+      - redis_slave_1_data:/data
     ports:
       - "6380:6379"
     networks:
@@ -68,6 +72,9 @@ services:
       <<: *redis-environment
       REDIS_BOOTSTRAP_ROLE: replica
       REDIS_NODE_HOST: 172.28.0.12
+    volumes:
+      - ./configs/ha/replica/redis.conf:/etc/redis/redis.conf.template:ro
+      - redis_slave_2_data:/data
     ports:
       - "6381:6379"
     networks:
@@ -83,6 +90,9 @@ services:
       <<: *redis-environment
       REDIS_BOOTSTRAP_ROLE: replica
       REDIS_NODE_HOST: 172.28.0.13
+    volumes:
+      - ./configs/ha/replica/redis.conf:/etc/redis/redis.conf.template:ro
+      - redis_slave_3_data:/data
     ports:
       - "6382:6379"
     networks:
@@ -125,3 +135,9 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/16
+
+volumes:
+  redis_master_data:
+  redis_slave_1_data:
+  redis_slave_2_data:
+  redis_slave_3_data:
